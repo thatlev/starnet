@@ -6897,7 +6897,7 @@ const Chat = (() => {
         body: JSON.stringify({ streamId, kind, text, requestId: crypto.randomUUID() }) });
       const result = await r.json();
       if (!r.ok) throw new Error(result.error || 'The server refused this goal');
-      localLine(GoalLoop.statusLine(result.goal?.goal) + ' · owned by LevServer');
+      localLine(GoalLoop.statusLine(result.goal?.goal) + ' · managed by your gateway');
     } catch (e) { localLine(e.message); }
   }
   function goalCommand(args) {

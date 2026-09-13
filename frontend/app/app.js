@@ -781,7 +781,7 @@ const App = (() => {
   }
   function providerKeyPlaceholder(provider, configured) {
     const p = normalizeProviderId(provider);
-    if (configured) return provider === 'levserver' ? 'stored on LevServer - leave blank to keep' : 'stored locally - leave blank to keep';
+    if (configured) return provider === 'levserver' ? 'stored on your gateway - leave blank to keep' : 'stored locally - leave blank to keep';
     if (p === 'openai') return 'sk-...  -  platform.openai.com/api-keys';
     if (p === 'anthropic') return 'sk-ant-...  -  console.anthropic.com/settings/keys';
     if (p === 'gemini') return 'AIza...  -  aistudio.google.com/app/apikey';

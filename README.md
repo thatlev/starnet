@@ -8,9 +8,11 @@ The Linux service needs Node.js 22+ and a small, locked JavaScript validator dep
 
 - Mac: **StarNet Remote.app** in Applications. GitHub sign-in uses the existing GitHub CLI OAuth application and verifies account `thatlev` by numeric ID.
 - Linux: **starnet-remote.service**, a dedicated unprivileged `starnet` user, and `starnet status` CLI. State resides in the encrypted private vault.
-- Model access: the existing LevServer Responses gateway, with a dedicated StarNet key held only on the server. Select **LEVSERVER** when creating your crew.
+- Model access: the existing LevServer Responses gateway, with a dedicated StarNet key held only on the server. Select **GATEWAY** when creating your crew.
 - Private transport: pinned, key-authenticated `lev-server-direct` SSH; loopback gateway on 18791, runtime on 18792, Mac viewer on 8790. No public ingress.
 - Setup ships empty: no crew, tasks, goals, schedules or model runs are seeded.
+
+The station's small **Gateway** control opens activity and pending decisions. Host, GitHub identity and latency live under **Connection details**. On the Mac, use **StarNet Remote → Gateway…** or **⌘,** from any station screen. Connection trouble and pending decisions make the control visible without a permanent diagnostic banner.
 
 Create your station and crew in the Mac app. Let changes finish saving before quitting. A task accepted by the server continues without the app. Reopen the app to recover the durable station, transcripts and live activity. Pending permission requests still need your decision and deny on timeout. Explicit **Stop** cancels work.
 

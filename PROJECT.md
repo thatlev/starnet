@@ -13,6 +13,12 @@ Upstream history, MIT license and notices are retained.
 - [x] Verify authentication refusals, disconnect/reconnect, explicit cancellation, replay, persistence and Linux resource use with isolated fixtures.
 - [x] Review source and install the release through its health gate.
 
+## Active follow-up: quiet gateway interface
+
+- [x] Replace the floating connection banner with a compact Gateway control and optional details.
+- [x] Retain visible reconnect/decision states and the existing approval and live-state behavior.
+- [ ] Rebuild and install the Mac app, verify the scoped change, and push the reviewed release.
+
 The server owns execution and durable station state. The Mac owns rendering and user input.
 Never automatically replay an interrupted tool or model run after a server crash.
 Recovery must use the existing explicit continuation/review flow. Closing the Mac app is not a server crash.

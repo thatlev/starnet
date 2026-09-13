@@ -18,6 +18,7 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         let menu = NSMenu()
         let appMenu = NSMenuItem(); menu.addItem(appMenu)
         let actions = NSMenu(); appMenu.submenu = actions
+        actions.addItem(withTitle: "Gateway…", action: #selector(showGateway), keyEquivalent: ",").target = self
         actions.addItem(withTitle: "Reload Station", action: #selector(reload), keyEquivalent: "r").target = self
         actions.addItem(NSMenuItem.separator())
         actions.addItem(withTitle: "Quit StarNet Remote", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -29,7 +30,7 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         NSApp.mainMenu = menu
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 940),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "StarNet Remote · LevServer"
+        window.title = "StarNet Remote"
         window.minSize = NSSize(width: 900, height: 640)
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("StarNetRemoteWindow")
@@ -39,7 +40,7 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self; web.uiDelegate = self
         window.contentView = web
-        status = NSTextField(labelWithString: "Connecting to LevServer…")
+        status = NSTextField(labelWithString: "Connecting to your gateway…")
         status.font = NSFont.monospacedSystemFont(ofSize: 18, weight: .medium)
         status.textColor = .labelColor
         status.alignment = .center
@@ -78,12 +79,16 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
                     self.loaded = true; self.status.removeFromSuperview()
                     self.web.load(URLRequest(url: self.stationURL))
                 } else {
-                    self.status.stringValue = "Connecting to LevServer…\nServer work continues while the connection recovers."
+                    self.status.stringValue = "Connecting to your gateway…\nYour station will appear when the connection is ready."
                 }
             }
         }.resume()
     }
     @objc func reload() { web.reload() }
+    @objc func showGateway() {
+        guard loaded else { checkConnection(); return }
+        web.evaluateJavaScript("window.StarNetGateway?.open()", completionHandler: nil)
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ notification: Notification) {
         stopping = true
