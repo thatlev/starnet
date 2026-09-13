@@ -8976,7 +8976,7 @@ const World = (() => {
     // construction server-initiated (schedule/event/nightshift today) and takes the pose — the old
     // schedule|event whitelist silently dropped trigger 'nightshift', so a self-initiated task ran while the
     // body wandered idle (2026-07-18: the app asserting idle over a provably live run).
-    U.bus.on('agent.run.start', p => { if (p && p.agentId && p.trigger && p.trigger !== 'directive') { serverLit.add(p.agentId); if (agent && p.agentId === agent.id) agent.taskViaConveyor = true; setActivityFor(p.agentId, 'task'); } });
+    U.bus.on('agent.run.start', p => { if (p && p.agentId && p.trigger && (p.trigger !== 'directive' || window.__STARNET_REMOTE__)) { serverLit.add(p.agentId); if (agent && p.agentId === agent.id) agent.taskViaConveyor = true; setActivityFor(p.agentId, 'task'); } });
     U.bus.on('agent.run.end', p => { if (p && p.agentId && !noteRunEnd(p.agentId, p.runId) && serverLit.has(p.agentId)) { serverLit.delete(p.agentId); setActivityFor(p.agentId, 'idle'); } });
     // M-mem.4 → notification diet (2026-08-18): auto-compaction no longer toasts — it is loop plumbing,
     // not news. The bottom-bar CTX gauge still flashes its mint "compacted" echo (StationUI listens to

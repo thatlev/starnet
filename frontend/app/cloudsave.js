@@ -375,6 +375,20 @@ const CloudSave = (() => {
     localStorage.removeItem('starnet.save');
     location.reload();
   }
-  return { localSnapshot: () => latestLocal, reloadCurrent, revision: () => revision, push, pull, reconcile, flush, flushForUpdate, installUnloadFlush, health: healthNow, isFutureSentinel, isUnknownSentinel, markDegraded, recoveryNotice, lineage, ackRecovery, pullOutcome: () => lastPullOutcome, _isSave: isSave, _isFutureSave: isFutureSave };
+  async function refreshRemote(canAdopt = () => true) {
+    if (pending || activeFlushes.size || conflict || !canAdopt()) return null;
+    const before = localStorage.getItem('starnet.save');
+    let cached; try { cached = JSON.parse(before); } catch (_) { return null; }
+    if (!isSave(cached) || cached._saveDirty) return null;
+    const remote = await pull();
+    // A user edit or save during the read wins. Never replace a draft, an
+    // in-flight mutation, or a newer-schema station to refresh remote sessions.
+    if (pending || activeFlushes.size || conflict || !canAdopt() || before !== localStorage.getItem('starnet.save')) return null;
+    if (!isSave(remote) || num(remote.version) > currentVersion() || num(remote._saveRevision) <= revision) return null;
+    localStorage.setItem('starnet.save', JSON.stringify(remote));
+    revision = num(remote._saveRevision); latestLocal = remote;
+    return remote;
+  }
+  return { refreshRemote, localSnapshot: () => latestLocal, reloadCurrent, revision: () => revision, push, pull, reconcile, flush, flushForUpdate, installUnloadFlush, health: healthNow, isFutureSentinel, isUnknownSentinel, markDegraded, recoveryNotice, lineage, ackRecovery, pullOutcome: () => lastPullOutcome, _isSave: isSave, _isFutureSave: isFutureSave };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = CloudSave;

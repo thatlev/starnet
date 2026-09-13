@@ -745,6 +745,7 @@ const App = (() => {
   }
   function normalizeProviderId(provider) {
     const p = String(provider || 'openrouter').trim().toLowerCase();
+    if (p === 'levserver') return 'levserver';
     if (p === 'codex' || p === 'openai-codex') return 'codex';
     if (p === 'openai' || p === 'openai-api') return 'openai';
     if (p === 'anthropic' || p === 'claude') return 'anthropic';
@@ -780,7 +781,7 @@ const App = (() => {
   }
   function providerKeyPlaceholder(provider, configured) {
     const p = normalizeProviderId(provider);
-    if (configured) return 'stored locally - leave blank to keep';
+    if (configured) return provider === 'levserver' ? 'stored on LevServer - leave blank to keep' : 'stored locally - leave blank to keep';
     if (p === 'openai') return 'sk-...  -  platform.openai.com/api-keys';
     if (p === 'anthropic') return 'sk-ant-...  -  console.anthropic.com/settings/keys';
     if (p === 'gemini') return 'AIza...  -  aistudio.google.com/app/apikey';
@@ -5006,7 +5007,7 @@ const App = (() => {
   async function init() {
     if (Harness.init) await Harness.init();   // desktop: load the keychain "configured?" flag first
     if (typeof StationUI !== 'undefined') StationUI.init();   // applies saved theme/CRT settings, wires the bottom bar
-    if (typeof Updates !== 'undefined' && typeof StationUI !== 'undefined') Updates.init({ notify: StationUI.notify, rerender: StationUI.rerender });
+    if (!window.__STARNET_REMOTE__ && typeof Updates !== 'undefined' && typeof StationUI !== 'undefined') Updates.init({ notify: StationUI.notify, rerender: StationUI.rerender });
 
     /* EXTENSIONS AWAITING APPROVAL. Hooks and plugins are opt-in by design: an unapproved one is silently
        inert. That is the correct security posture and the worst possible UX if it is never surfaced — the
@@ -5163,5 +5164,12 @@ const App = (() => {
     openRecipeLaunch: openRecipeLaunch,   // routine-nudge beat (lane D): accepting deep-links into the recipe's SCHEDULE IT form
     applyConfig: applyAgentConfig,
     setApproval: setAgentApproval,
-    setExecutionProfile: setAgentExecutionProfile };
+    setExecutionProfile: setAgentExecutionProfile,
+    refreshRemoteSessions: saved => {
+      if (!agent || !saved || !Array.isArray(saved.workstreams)) return;
+      const activeId = Workstreams.activeId();
+      const current = Workstreams.init({ ...saved, activeId });
+      if (current && typeof Chat !== 'undefined' && Chat.refreshRemoteHistory) Chat.refreshRemoteHistory(current);
+      renderRail();
+    } };
 })();

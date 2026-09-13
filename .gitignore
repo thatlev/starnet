@@ -200,3 +200,6 @@ dev/.shots-toast/
 /dev/.group-profile/
 .worldshots/
 sidecar/mcp/google-client.json
+
+# Private build and verification artifacts
+/work/

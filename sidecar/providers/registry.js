@@ -24,6 +24,15 @@
   //     legitimately exceed the hosted-provider default (local model loading in Ollama).
   const PROFILES = [
     {
+      id: 'levserver', aliases: [], name: 'LevServer', label: 'LEVSERVER',
+      endpoint: 'your private model gateway', blurb: 'your existing LevServer model accounts',
+      live: true, adapter: 'levserver-responses', apiMode: 'responses', authType: 'api_key',
+      keyRequired: true, keyEnv: ['LEVSERVER_KEY'], modelsRequireAuth: true,
+      baseUrl: 'http://127.0.0.1:8781/v1', baseUrlEnv: ['LEVSERVER_BASE_URL'], modelsPath: '/models',
+      defaultReasoningEffort: 'medium', unmetered: true, credentialPool: false,
+      supportsTools: true, supportsReasoning: true, order: 1
+    },
+    {
       id: 'openrouter',
       aliases: ['or'],
       name: 'OpenRouter',
