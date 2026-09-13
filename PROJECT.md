@@ -17,7 +17,11 @@ Upstream history, MIT license and notices are retained.
 
 - [x] Replace the floating connection banner with a compact Gateway control and optional details.
 - [x] Retain visible reconnect/decision states and the existing approval and live-state behavior.
-- [ ] Rebuild and install the Mac app, verify the scoped change, and push the reviewed release.
+- [x] Rebuild and install the Mac app and verify the scoped change. Push the reviewed source with this receipt.
+
+Gateway interface follow-up: source `897d1e70a35afecae33d97618f5af70ca71e7569`, Mac version 0.1.1 (build 2). The installed app signature and connection-source identity passed. The matching Linux release passed the installer readiness gate and unauthenticated-access refusal; the old release and Mac app are preserved.
+
+Verification: all 15 remote behavior tests and 105 provider registry assertions passed. An isolated browser fixture passed 17 gateway interaction assertions plus keyboard disclosure/Escape checks. Desktop, 390px width and 200% text at the minimum Mac window size were checked; the zoom check caught and fixed viewport clipping. Tests included pending approvals, disconnected/expired sessions, rejected consent responses, text-only argument rendering and focus retention. The actual installed frontend loaded through the rebuilt app's authenticated proxy, showed the new Gateway panel and provider label, and had no floating banner. The station remained empty after installation. Native menu/window inspection is still pending because the Mac is locked; the browser checks do not claim native acceptance.
 
 The server owns execution and durable station state. The Mac owns rendering and user input.
 Never automatically replay an interrupted tool or model run after a server crash.
