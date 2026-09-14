@@ -224,7 +224,7 @@ const Onboarding = (() => {
       journal.legacyContinue = true;
       journal.existingPurpose = !!opts.resumeState.purpose;
     }
-    questionCursor = 0; replaying = journal.nodes.length > 0;
+    questionCursor = 0; replaying = journal.nodes.length > 0 || !!opts.progress?.legacyContinue;
     docs = opts.docs; commit = opts.commit; doneCb = opts.done || null;
     taughtCb = opts.taught || null;
     notifyFn = opts.notify || null; NAME = opts.name || 'AGENT';
@@ -317,6 +317,9 @@ const Onboarding = (() => {
     if (World.igniteSpark) World.igniteSpark();
     if (World.setWakeProgress) World.setWakeProgress(0.15);         // not the pitch dark of a first birth
     if (World.awakenTurn) World.awakenTurn();                       // it already knows where you are
+    // A checkpointed meeting resumes its question directly. Replaying the old
+    // typewriter greeting delays the draft and makes a saved meeting look lost.
+    if (journal && (journal.nodes.length || journal.legacyContinue)) { startQuestions(); return; }
     type([
       seg('…and we’re back.', 38, 550),
       seg('  i remember this part — i caught fire, met you, and the lights went out mid-briefing.', 42, 550),
