@@ -31,35 +31,70 @@ const Onboarding = (() => {
   let birthLines = null;       // the agent's OWN first words (prefetched at wake) — each slot upgrades opportunistically, never waits
   let birthFailed = false;     // the wire answered dead when it should be live → one honest CONNECT line at the close
 
+  // The interview journal belongs to this agent's save, alongside its dossier.
+  // Restore answered choices and completed model replies without asking or generating
+  // them again. The first unanswered node resumes the normal interactive flow.
+  let journal = null, checkpointFn = null, questionCursor = 0, replaying = false, epoch = 0;
+  const cancelled = Symbol('interview cancelled');
+  function checkpoint() { if (checkpointFn && journal) checkpointFn(JSON.parse(JSON.stringify(journal))); }
+  async function askNode(cfg) {
+    const generation = epoch, index = questionCursor++;
+    const key = JSON.stringify({ lines: cfg.lines, options: cfg.options, custom: cfg.allowCustom });
+    const saved = journal?.nodes[index];
+    if (saved && saved.key === key) return JSON.parse(JSON.stringify(saved.answer));
+    replaying = false;
+    const draftKey = 'starnet.interview.draft.' + (journal?.id || NAME);
+    let draft = '';
+    try { const savedDraft = JSON.parse(localStorage.getItem(draftKey)); if (savedDraft?.key === key) draft = savedDraft.text; } catch (_) {}
+    const answer = await Dialogue.node({ ...cfg, draft,
+      onDraft: text => { try { localStorage.setItem(draftKey, JSON.stringify({ key, text })); } catch (_) {} }
+    });
+    if (generation !== epoch) throw cancelled;
+    if (running && generation === epoch && journal) {
+      journal.nodes[index] = { key, answer };
+      journal.nodes.length = index + 1;
+      checkpoint(); // retain the actual answer before a slow follow-up/model call
+      try { localStorage.removeItem(draftKey); } catch (_) {}
+    }
+    return answer;
+  }
+  function say(lines, options) { return replaying ? Promise.resolve() : Dialogue.say(lines, options); }
+
   /* ---- audio arc: a heartbeat that finds its rhythm + a warming pad ----
      Self-scheduling and flag-gated with NO persistent nodes (each voice self-terminates), so teardown
      is just "stop scheduling" — it can never hang or leak. */
   const AU = (() => {
-    let beatT = null, padT = null, on = false, period = 1.6, jit = 0.45, warm = 0;
+    let timer = null, on = false, period = 1.6, jit = 0.45, warm = 0, nextBeat = 0, nextPad = 0;
     const has = () => (typeof SFX !== 'undefined' && SFX.env && SFX.ctx);
-    function heart() {
+    function schedule() {
       if (!on) return;
-      if (has()) {
-        SFX.env(55, { attack: 0.005, hold: 0.04, release: 0.17, type: 'sine', vol: 0.15 });   // lub
-        SFX.env(90, { attack: 0.005, hold: 0.03, release: 0.10, type: 'sine', vol: 0.06 });    // harmonic so it reads on laptop speakers
-        SFX.env(46, { attack: 0.010, hold: 0.05, release: 0.22, type: 'sine', vol: 0.10, when: 0.16 });   // dub
+      if (has() && SFX.ctx.state === 'running') {
+        const now = SFX.ctx.currentTime, ahead = now + 0.18;
+        // A suspended/busy UI never plays a backlog of missed beats on return.
+        if (nextBeat < now) nextBeat = now + 0.025;
+        if (nextPad < now) nextPad = now + 0.025;
+        if (nextBeat <= ahead) {
+          const when = nextBeat - now;
+          SFX.env(55, { attack: 0.005, hold: 0.04, release: 0.17, type: 'sine', vol: 0.15, when });
+          SFX.env(90, { attack: 0.005, hold: 0.03, release: 0.10, type: 'sine', vol: 0.06, when });
+          SFX.env(46, { attack: 0.010, hold: 0.05, release: 0.22, type: 'sine', vol: 0.10, when: when + 0.16 });
+          nextBeat += Math.max(0.38, period + (Math.random() * 2 - 1) * jit);
+        }
+        if (nextPad <= ahead) {
+          const when = nextPad - now;
+          SFX.env(110, { attack: 2.4, hold: 1.0, release: 2.6, type: 'sine', vol: 0.045, when });
+          SFX.env(165, { attack: 2.6, hold: 1.0, release: 2.6, type: 'sine', vol: 0.030, when });
+          if (warm > 0.25) SFX.env(138, { attack: 2.0, hold: 1.0, release: 2.2, type: 'sine', vol: 0.030 * warm, when });
+          if (warm > 0.55) SFX.env(660, { attack: 1.6, hold: 0.8, release: 1.6, type: 'triangle', vol: 0.018 * warm, when });
+          nextPad += 3;
+        }
       }
-      beatT = setTimeout(heart, Math.max(380, (period + (Math.random() * 2 - 1) * jit) * 1000));
-    }
-    function pad() {
-      if (!on) return;
-      if (has()) {
-        SFX.env(110, { attack: 2.4, hold: 1.0, release: 2.6, type: 'sine', vol: 0.045 });   // cold root
-        SFX.env(165, { attack: 2.6, hold: 1.0, release: 2.6, type: 'sine', vol: 0.030 });   // bare fifth
-        if (warm > 0.25) SFX.env(138, { attack: 2.0, hold: 1.0, release: 2.2, type: 'sine', vol: 0.030 * warm });   // major third warms in
-        if (warm > 0.55) SFX.env(660, { attack: 1.6, hold: 0.8, release: 1.6, type: 'triangle', vol: 0.018 * warm });  // high shimmer
-      }
-      padT = setTimeout(pad, 3000);
+      timer = setTimeout(schedule, 50);
     }
     return {
-      start() { on = true; period = 1.6; jit = 0.45; warm = 0; heart(); pad(); },
-      steady(p) { period = 1.6 - 0.7 * p; jit = Math.max(0.03, 0.45 - 0.42 * p); warm = p; },   // finds its rhythm + warms as it learns who it is
-      stop() { on = false; if (beatT) clearTimeout(beatT); if (padT) clearTimeout(padT); beatT = padT = null; }
+      start() { if (timer) clearTimeout(timer); on = true; period = 1.6; jit = 0.45; warm = 0; nextBeat = nextPad = 0; schedule(); },
+      steady(p) { period = 1.6 - 0.7 * p; jit = Math.max(0.03, 0.45 - 0.42 * p); warm = p; },
+      stop() { on = false; if (timer) clearTimeout(timer); timer = null; }
     };
   })();
 
@@ -181,6 +216,15 @@ const Onboarding = (() => {
   // enterGame has already put the room in darkness + frozen the newborn facing AWAY (World.beginAwakening),
   // so the COLD OPEN is the held dark before anything happens. Then the mind catches fire.
   function start(opts) {
+    epoch++;
+    checkpointFn = opts.checkpoint || null;
+    journal = opts.progress?.version === 1 && Array.isArray(opts.progress.nodes) && Array.isArray(opts.progress.minds)
+      ? JSON.parse(JSON.stringify(opts.progress)) : { version: 1, id: opts.agentId || opts.name || 'agent', nodes: [], minds: [] };
+    if (!opts.progress && !opts.wake && opts.resumeState?.hasSavedProfile) {
+      journal.legacyContinue = true;
+      journal.existingPurpose = !!opts.resumeState.purpose;
+    }
+    questionCursor = 0; replaying = journal.nodes.length > 0;
     docs = opts.docs; commit = opts.commit; doneCb = opts.done || null;
     taughtCb = opts.taught || null;
     notifyFn = opts.notify || null; NAME = opts.name || 'AGENT';
@@ -196,7 +240,7 @@ const Onboarding = (() => {
     // at ignition (waitBirth), which reads as drama, not loading. No two minds ever wake the same.
     birthLines = null; birthFailed = false;
     if (!specialty && opts.wake && brainReady()) {
-      llmCall(WakeMind.buildBirthScript({ name: NAME })).then(res => {
+      llmCall(WakeMind.buildBirthScript({ name: NAME }), true).then(res => {
         if (res && !res.error && res.text) { try { birthLines = WakeMind.parseBirthScript(res.text); } catch (_) {} }
         else birthFailed = true;   // the wire was supposed to be live and answered dead — own it at the close
       });
@@ -440,14 +484,19 @@ const Onboarding = (() => {
   const FOLLOWUP_BUDGET = 3;
   // reason-only + internal — no tools reachable (placed:[]), no run.start/end on the bus (the awakening
   // thinking about you is not a shipped task; XP/telemetry stay honest), cost still counted.
-  function llmCall(directive) {
+  function llmCall(directive, birth = false) {
+    const cached = !birth && journal?.minds.find(row => row.directive === directive);
+    if (cached) return Promise.resolve(cached.result);
+    let pending;
     try {
-      return Harness.chat({
+      pending = Harness.chat({
         system: getSystem ? getSystem() : '',
         messages: [{ role: 'user', content: directive }],
         agentId: 'agent', isTask: false, placed: [], internal: true
       }).catch(() => null);
-    } catch (_) { return Promise.resolve(null); }
+    } catch (_) { pending = Promise.resolve(null); }
+    if (!birth) pending.interviewDirective = directive;
+    return pending;
   }
   // wait for an in-flight reply with patience windows: a quiet first beat, then one spoken patter line per
   // window while it is still composing, up to the hard cap. Resolves the reply, or null past the ceiling.
@@ -460,14 +509,21 @@ const Onboarding = (() => {
       await Promise.race([capped, sleep(windows[w])]);
       if (done || !running) break;
       const line = patter && patter[w];
-      if (line) await Dialogue.say([seg(line, 44, 240)], { auto: true });   // latency patter — never gate a wait on a click
+      if (line) await say([seg(line, 44, 240)], { auto: true });   // latency patter — never gate a wait on a click
     }
     if (!done && running) await capped;                  // the last stretch, bounded by the ceiling
     return done ? out : null;
   }
   async function mindWait(pending, parse, patter, capMs) {
     if (!pending) return null;
+    const generation = epoch;
     const res = await awaitPatiently(pending, patter, capMs);
+    if (generation !== epoch) throw cancelled;
+    // Checkpoint the outcome we actually used, including a timeout. A late
+    // reply must not introduce a different follow-up when answers replay.
+    if (running && journal && pending.interviewDirective !== undefined) {
+      journal.minds.push({ directive: pending.interviewDirective, result: res }); checkpoint();
+    }
     if (!running || !res || res.error || !res.text) return null;
     try { return parse(res.text); } catch (_) { return null; }
   }
@@ -476,7 +532,7 @@ const Onboarding = (() => {
   function bumpTruth() {
     beatN++;
     const p = Math.min(1, beatN / beatTotal);
-    sfx('truth', beatN - 1);                           // a rising bell — a truth clicks into place
+    if (!replaying) sfx('truth', beatN - 1);                           // a rising bell — a truth clicks into place
     if (World.setWakeProgress) World.setWakeProgress(p * 0.92);   // lift the light (keep a sliver for the dawn)
     if (World.truthPulse) World.truthPulse();          // the body flares as the truth is written in
     if (World.camCreep) World.camCreep();              // a hair closer
@@ -510,7 +566,7 @@ const Onboarding = (() => {
   async function askStep(s, o) {
     o = o || {};
     while (true) {
-      let res = await Dialogue.node({
+      let res = await askNode({
         lines: [seg(s.prompt, 46, 0)],
         options: s.options || [],
         allowCustom: !!s.custom,
@@ -523,7 +579,7 @@ const Onboarding = (() => {
       // the Commander's OWN words can land (skipping the steer follow-up counts as a skip, writes nothing).
       const steerOpt = (!res.skip && res.label) ? (s.options || []).find(x => x && x.steer && x.label === res.label) : null;
       if (steerOpt) {
-        res = await Dialogue.node({
+        res = await askNode({
           lines: [seg(steerOpt.steer, 46, 0)],
           options: [{ label: 'Skip for now', value: '', skip: true }],
           allowCustom: true, customLabel: s.customLabel || 'type your answer', customPlaceholder: s.placeholder,
@@ -537,7 +593,7 @@ const Onboarding = (() => {
       const isSkip = !!res.skip || res.value == null ||
         (typeof Interview !== 'undefined' && Interview.isSkipAnswer ? Interview.isSkipAnswer(res.value) : String(res.value).trim() === '');
       if (isSkip && !s.optional) {   // required step: never a dead pause — re-ask gently, never swallow the empty
-        await Dialogue.say([seg('i need a direction here — even a rough one.', 46, 320)]);
+        await say([seg('i need a direction here — even a rough one.', 46, 320)]);
         if (!running) return { text: '' };
         continue;
       }
@@ -552,15 +608,15 @@ const Onboarding = (() => {
       // seed the user-affinity profile from the stated PURPOSE so day-one suggestions aren't blank (the engine
       // ignores this once real usage accrues). Cheap, explicit, no inference.
       if (!isSkip && s.field === 'purpose' && typeof ProfileStore !== 'undefined' && typeof Classify !== 'undefined') ProfileStore.seed(Classify.getTag(text));
-      if (!o.quietAck) {
+      if (!o.quietAck && !replaying) {
         bumpTruth();
         const ack = typeof s.ack === 'function' ? s.ack(text) : s.ack;
-        await Dialogue.say([seg(ack, 44, 360)]);
+        await say([seg(ack, 44, 360)]);
         // NS visibility: after the cadence beat RAISED the dial, tell the Commander what that actually means tonight
         // (build vs draft + cold-start readiness), live from the status route. Only for a run-on-my-own pick; skips
         // are silent. Fail-open — a '' line (unreachable route / not build-capable) simply adds nothing.
         if (!isSkip && s.posturePreset) {
-          try { const nl = await nightshiftPostureLine(text); if (nl && running) await Dialogue.say([seg(nl, 44, 360)]); } catch (_) {}
+          try { const nl = await nightshiftPostureLine(text); if (nl && running) await say([seg(nl, 44, 360)]); } catch (_) {}
         }
       }
       return { text };
@@ -580,6 +636,7 @@ const Onboarding = (() => {
   // one-line stamp). Seeds (mechanical notes, weight 'seed') are never inked — nothing was learned.
   const INK_LABEL = { pain: 'pain', ambition: 'ambition', identity: 'identity', goals: 'projects & goals', stack: 'stack', style: 'style', standing_orders: 'standing orders', people: 'people', schedule: 'schedule' };
   function ink(dim, text) {
+    if (replaying) return;
     try {
       if (typeof Dialogue === 'undefined' || !Dialogue.ink) return;
       const t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
@@ -633,8 +690,19 @@ const Onboarding = (() => {
     const postureStep = steps.find(x => x.posturePreset) || null;
 
     const interviewOnly = !!(options && options.interviewOnly);
+    // Older installs saved the dossier but had no question journal. Keep those
+    // answers and finish only the still-uncommitted station direction/cadence.
+    if (!interviewOnly && journal?.legacyContinue) {
+      checkpoint();
+      await say([seg('your earlier answers are saved in your dossier. let’s finish the station’s direction.', 46, 0)]);
+      if (!running) return;
+      if (!journal.existingPurpose) await askStep(fallbackPurposeStep(), { quietAck: true });
+      if (!running) return;
+      if (postureStep) await askStep(postureStep);
+      return;
+    }
     stage('GET ACQUAINTED', 'Choose your pace');
-    const pace = await Dialogue.node({
+    const pace = await askNode({
       lines: [seg(interviewOnly
         ? 'let’s fill in the picture. a few questions about your work, or a deeper conversation about your goals? you can review and change what we save in your dossier.'
         : 'i’m awake. let’s give this station a direction. start with two setup questions, or take time to tell me about your work. you can edit what we save in your dossier.', 46, 0)],
@@ -657,9 +725,12 @@ const Onboarding = (() => {
     // ignition, resolved long before the first question — is the LIVE-WIRE PROOF. A configured brain whose
     // birth call came back dead (birthFailed: bad token, dead network, provider down) gets the same honest
     // holding path: the deep questions are never asked at a wire that already failed to answer.
-    if (!brainReady() || birthFailed) {
+    if (journal && journal.interviewReady == null) {
+      journal.interviewReady = !!brainReady() && !birthFailed; checkpoint();
+    }
+    if (journal ? !journal.interviewReady : (!brainReady() || birthFailed)) {
       beatTotal = 2;
-      await Dialogue.say([seg('one thing, straight: the real interview — the one where i actually learn who you are — needs a live mind behind it, and my wire is dark. wire my brain and i’ll ask you the real questions the moment it hums.', 42, 380)]);
+      await say([seg('one thing, straight: the real interview — the one where i actually learn who you are — needs a live mind behind it, and my wire is dark. wire my brain and i’ll ask you the real questions the moment it hums.', 42, 380)]);
       if (!running) return;
       setDeferred();
       await askStep(fallbackPurposeStep());
@@ -669,7 +740,7 @@ const Onboarding = (() => {
     }
 
     // B0. THE STAKES — the give-to-get trade, declared up front.
-    await Dialogue.say([seg('your answers help me choose work that matters to you. they’re saved in your dossier, where you can review and change them. skip anything you’d rather work out later.', 42, 380)]);
+    await say([seg('your answers help me choose work that matters to you. they’re saved in your dossier, where you can review and change them. skip anything you’d rather work out later.', 42, 380)]);
     if (!running) return;
 
     // The opening pace choice also owns interview depth; never ask the same choice twice.
@@ -714,13 +785,13 @@ const Onboarding = (() => {
         if (!running) return;
         if (digReply) {
           upsertSynthBeliefs(digReply.beliefs);
-          await Dialogue.say([seg(digReply.ack, 44, 360)]);
+          await say([seg(digReply.ack, 44, 360)]);
           if (!running) return;
           if (digReply.ask && followupsLeft > 0) {
             followupsLeft--;
             digT = await askGenerated(digReply.ask, digReply.chips, 'type your answer', 'your answer — it goes in my file…');
             if (!running) return;
-            if (digT) { bumpTruth(); await Dialogue.say([seg('good. the picture’s forming.', 44, 320)]); if (!running) return; }
+            if (digT) { bumpTruth(); await say([seg('good. the picture’s forming.', 44, 320)]); if (!running) return; }
           }
         }
       }
@@ -744,11 +815,11 @@ const Onboarding = (() => {
       const reply = await mindWait(pending, WakeMind.parsePainReply, PAIN_PATTER, PAIN_REPLY_MS);
       if (!running) return;
       if (reply) upsertSynthBeliefs(reply.beliefs);
-      await Dialogue.say([seg(reply ? reply.ack : (typeof painStep.ack === 'function' ? painStep.ack(painT) : painStep.ack), 44, 360)]);
+      await say([seg(reply ? reply.ack : (typeof painStep.ack === 'function' ? painStep.ack(painT) : painStep.ack), 44, 360)]);
       if (!running) return;
       if (reply && reply.ask && followupsLeft > 0) {
         followupsLeft--;
-        const f = await Dialogue.node({
+        const f = await askNode({
           lines: [seg(reply.ask, 46, 0)],
           options: [{ label: 'Skip for now', value: '', skip: true }],
           allowCustom: true, customLabel: 'type your answer', customPlaceholder: 'your answer — it goes straight in my dossier…',
@@ -762,7 +833,7 @@ const Onboarding = (() => {
           if (typeof DossierStore !== 'undefined' && DossierStore.upsert) { DossierStore.upsert('identity', { text: aboutT, source: 'onboarding', weight: 'stated' }); ink('identity', aboutT); }
           if (commit) commit({ context: aboutT });
           bumpTruth();
-          await Dialogue.say([seg('good — now i can see the ground i’m standing on.', 44, 360)]);
+          await say([seg('good — now i can see the ground i’m standing on.', 44, 360)]);
           if (!running) return;
         }
       }
@@ -806,11 +877,11 @@ const Onboarding = (() => {
         const reply = await mindWait(pending, WakeMind.parseProjectsReply, BENCH_PATTER, PAIN_REPLY_MS);
         if (!running) return;
         if (reply) upsertSynthBeliefs(reply.beliefs);
-        await Dialogue.say([seg(reply ? reply.ack : 'the bench — noted. that’s where my work lands first.', 44, 360)]);
+        await say([seg(reply ? reply.ack : 'the bench — noted. that’s where my work lands first.', 44, 360)]);
         if (!running) return;
         if (reply && reply.ask && followupsLeft > 0) {
           followupsLeft--;
-          const f = await Dialogue.node({
+          const f = await askNode({
             lines: [seg(reply.ask, 46, 0)],
             options: [{ label: 'Skip for now', value: '', skip: true }],
             allowCustom: true, customLabel: 'type your answer', customPlaceholder: 'the live one — straight into my file…',
@@ -821,7 +892,7 @@ const Onboarding = (() => {
           if (benchT) {
             if (typeof DossierStore !== 'undefined' && DossierStore.upsert) { DossierStore.upsert('goals', { text: benchT, source: 'onboarding', weight: 'stated' }); ink('goals', benchT); }
             bumpTruth();
-            await Dialogue.say([seg('good — now i know where the current is running.', 44, 360)]);
+            await say([seg('good — now i know where the current is running.', 44, 360)]);
             if (!running) return;
           }
         }
@@ -848,7 +919,7 @@ const Onboarding = (() => {
     // open, hunt mode inherits — recorded as a seed note so the gate never mistakes it for knowledge).
     let yearT = '', dreamT = '';
     if (yearStep) {
-      const yq = await Dialogue.node({
+      const yq = await askNode({
         lines: [seg(yearStep.prompt, 46, 0)],
         options: (digReply && digReply.yearChips && digReply.yearChips.length ? digReply.yearChips.map(c => ({ label: c, steer: 'is that it? say it in your words — what does it actually look like at the end?' })) : [])
           .concat(yearStep.options),
@@ -860,7 +931,7 @@ const Onboarding = (() => {
       const openOpt = yearStep.options.find(o => o && o.open) || null;
       const steerOpt = (!yq.skip && chosen) ? [].concat(digReply && digReply.yearChips ? digReply.yearChips : []).find(c => c === chosen) : null;
       if (steerOpt) {
-        const f2 = await Dialogue.node({
+        const f2 = await askNode({
           lines: [seg('is that it? say it in your words — what does it actually look like at the end?', 46, 0)],
           options: [{ label: 'Skip for now', value: '', skip: true }],
           allowCustom: true, customLabel: yearStep.customLabel, customPlaceholder: yearStep.placeholder,
@@ -870,7 +941,7 @@ const Onboarding = (() => {
         yearT = (!f2.skip && f2.value != null) ? String(f2.value).trim() : '';
       } else if (!yq.skip && openOpt && chosen === openOpt.label) {
         if (typeof DossierStore !== 'undefined' && DossierStore.upsert) DossierStore.upsert('ambition', { text: 'Direction open — wants the station to help discover what to build.', source: 'onboarding', weight: 'seed' });
-        await Dialogue.say([seg('fair. then finding it IS the mission — we hunt it down together, through real work.', 44, 380)]);
+        await say([seg('fair. then finding it IS the mission — we hunt it down together, through real work.', 44, 380)]);
         if (!running) return;
       } else if (!yq.skip && yq.value != null && String(yq.value).trim()) {
         yearT = String(yq.value).trim();
@@ -882,11 +953,11 @@ const Onboarding = (() => {
         const reply = await mindWait(pending, WakeMind.parseYearReply, AMBITION_PATTER, PAIN_REPLY_MS);
         if (!running) return;
         if (reply) upsertSynthBeliefs(reply.beliefs);
-        await Dialogue.say([seg(reply ? reply.ack : (typeof yearStep.ack === 'function' ? yearStep.ack(yearT) : yearStep.ack), 44, 360)]);
+        await say([seg(reply ? reply.ack : (typeof yearStep.ack === 'function' ? yearStep.ack(yearT) : yearStep.ack), 44, 360)]);
         if (!running) return;
         if (reply && reply.ask && followupsLeft > 0) {
           followupsLeft--;
-          const f = await Dialogue.node({
+          const f = await askNode({
             lines: [seg(reply.ask, 46, 0)],
             options: [{ label: 'Skip for now', value: '', skip: true }],
             allowCustom: true, customLabel: 'describe it', customPlaceholder: 'what it looks like — straight into my dossier…',
@@ -897,7 +968,7 @@ const Onboarding = (() => {
           if (dreamT) {
             if (typeof DossierStore !== 'undefined' && DossierStore.upsert) { DossierStore.upsert('ambition', { text: dreamT, source: 'onboarding', weight: 'stated' }); ink('ambition', dreamT); }
             bumpTruth();
-            await Dialogue.say([seg('that’s the version i’m keeping — the real one.', 44, 360)]);
+            await say([seg('that’s the version i’m keeping — the real one.', 44, 360)]);
             if (!running) return;
           }
         }
@@ -930,19 +1001,19 @@ const Onboarding = (() => {
       let askedElse = false;
       while (mir && mir.offers && mir.offers.length) {
         upsertSynthBeliefs(mir.beliefs);
-        await Dialogue.say([seg('okay. before i write anything down — here’s what i could take off you, starting tonight:', 44, 320)]);
+        await say([seg('okay. before i write anything down — here’s what i could take off you, starting tonight:', 44, 320)]);
         if (!running) return;
         const opts = mir.offers.map((o, i) => ({ label: (o.length > 64 ? o.slice(0, 63).replace(/\s+\S*$/, '') + '…' : o), value: 'o' + i }));
         if (!askedElse) opts.push({ label: 'what else could you do?', value: 'more' });
         opts.push({ label: 'none of these — i’ll say it', value: 'redirect' });
         opts.push({ label: 'Skip for now', value: '', skip: true });
-        const pick = await Dialogue.node({ lines: mir.offers.map((o, i) => seg((i ? '  ' : '') + '· ' + o, 46, 220)), options: opts });
+        const pick = await askNode({ lines: mir.offers.map((o, i) => seg((i ? '  ' : '') + '· ' + o, 46, 220)), options: opts });
         if (!running) return;
         if (pick && /^o\d$/.test(String(pick.value))) {
           grabbedMove = mir.offers[Number(String(pick.value).slice(1))] || '';
           if (grabbedMove && typeof DossierStore !== 'undefined' && DossierStore.upsert) { DossierStore.upsert('goals', { text: 'Wants the station to: ' + grabbedMove, source: 'onboarding', weight: 'synth' }); ink('goals', 'Wants the station to: ' + grabbedMove); }
           bumpTruth();
-          await Dialogue.say([seg('then that’s the one i keep my eye on.', 44, 340)]);
+          await say([seg('then that’s the one i keep my eye on.', 44, 340)]);
           break;
         }
         if (pick && pick.value === 'more' && !askedElse) {
@@ -952,7 +1023,7 @@ const Onboarding = (() => {
           continue;
         }
         if (pick && pick.value === 'redirect') {
-          const f = await Dialogue.node({
+          const f = await askNode({
             lines: [seg('better. say it — what would you actually hand me?', 46, 0)],
             options: [{ label: 'Skip for now', value: '', skip: true }],
             allowCustom: true, customLabel: 'type your answer', customPlaceholder: 'the task you’d actually hand me…',
@@ -964,7 +1035,7 @@ const Onboarding = (() => {
             grabbedMove = t;
             if (typeof DossierStore !== 'undefined' && DossierStore.upsert) { DossierStore.upsert('goals', { text: t, source: 'onboarding', weight: 'stated' }); ink('goals', t); }
             bumpTruth();
-            await Dialogue.say([seg('even better — your words beat my guesses. it’s in the file.', 44, 340)]);
+            await say([seg('even better — your words beat my guesses. it’s in the file.', 44, 340)]);
           }
         }
         break;
@@ -981,19 +1052,19 @@ const Onboarding = (() => {
     const synPending = brainReady()
       ? llmCall(WakeMind.buildSynthesis({ pain: painT, about: aboutT, stack: stackT, projects: projT, bench: benchT, ambition: yearT, dream: dreamT, tuesday: tuesdayT, dig: digT, lost: lostT, grabbed: grabbedMove, thin: !gaveAnything, name: NAME })) : null;
     if (synPending) {
-      await Dialogue.say([seg('hold on — let me put together what you just handed me…', 44, 240)], { auto: true });   // covers the synthesis wait — never gate it on a click
+      await say([seg('hold on — let me put together what you just handed me…', 44, 240)], { auto: true });   // covers the synthesis wait — never gate it on a click
       if (!running) return;
       const syn = await mindWait(synPending, WakeMind.parseSynthesis, SYNTH_PATTER, SYNTHESIS_MS);
       if (!running) return;
       if (syn) {
         upsertSynthBeliefs(syn.beliefs);
-        await Dialogue.say([seg(syn.read, 42, 420)]);
+        await say([seg(syn.read, 42, 420)]);
         if (!running) return;
-        const c = await Dialogue.node({ lines: [seg('did i read that right?', 46, 0)], options: WakeMind.confirmChoices() });
+        const c = await askNode({ lines: [seg('did i read that right?', 46, 0)], options: WakeMind.confirmChoices() });
         if (!running) return;
         let purposeT = syn.purpose;
         if (c && c.value === 'adjust') {
-          const own = await Dialogue.node({
+          const own = await askNode({
             lines: [seg('then say it straight — what are we actually here to do?', 46, 0)],
             options: [{ label: 'actually — keep your version', value: '' }],
             allowCustom: true, customLabel: 'the mission, in my own words', customPlaceholder: 'what this station is for…'
@@ -1012,7 +1083,7 @@ const Onboarding = (() => {
         if (syn.stack && typeof DossierStore !== 'undefined' && DossierStore.upsert) DossierStore.upsert('stack', { text: syn.stack, source: 'onboarding', weight: 'synth' });
         if (typeof ProfileStore !== 'undefined' && typeof Classify !== 'undefined') ProfileStore.seed(Classify.getTag(purposeT));
         bumpTruth();
-        await Dialogue.say([seg('there it is — purpose.md, in ink. that’s what this station’s for.', 44, 360)]);
+        await say([seg('there it is — purpose.md, in ink. that’s what this station’s for.', 44, 360)]);
         if (!running) return;
         purposeDone = true;
       }
@@ -1033,7 +1104,7 @@ const Onboarding = (() => {
     // then presents THIS — the one below-gate starter allowed, because the Commander picked it themselves).
     // No grab / loose path → the honest close: the hunt is declared, never a fake promise.
     if (grabbedMove) {
-      const p = await Dialogue.node({
+      const p = await askNode({
         lines: [seg('then here’s my first move — ' + grabbedMove, 42, 380), seg('  say the word and i start, the moment the tour’s out of the way.', 44, 0)],
         options: [
           { label: 'do it — that’s the one', value: 'run' },
@@ -1043,11 +1114,11 @@ const Onboarding = (() => {
       if (!running) return;
       if (p && p.value === 'run' && typeof PitchStore !== 'undefined' && PitchStore.armFirstMove) {
         PitchStore.armFirstMove(grabbedMove);
-        await Dialogue.say([seg('deal. it’s loaded.', 44, 340)]);
+        await say([seg('deal. it’s loaded.', 44, 340)]);
         if (!running) return;
       }
     } else if (loose || !gaveAnything) {
-      await Dialogue.say([seg('then i watch, i learn, i ask. give me a week of real work and i’ll know you better than a form ever could.', 42, 380)]);
+      await say([seg('then i watch, i learn, i ask. give me a week of real work and i’ll know you better than a form ever could.', 42, 380)]);
       if (!running) return;
     }
   }
@@ -1057,8 +1128,12 @@ const Onboarding = (() => {
     Dialogue.open({ name: NAME });
     stage('GET ACQUAINTED', specialty ? 'Your new crew member' : 'Your direction');
     beatN = 0;
-    if (specialty) { beatTotal = Math.max(1, steps.length); await runSteps(steps); }
-    else { beatTotal = 6; await runLeadMeeting(); }   // pain, its follow-up, ambition, its follow-up, purpose, cadence
+    const generation = epoch;
+    try {
+      if (specialty) { beatTotal = Math.max(1, steps.length); await runSteps(steps); }
+      else { beatTotal = 6; await runLeadMeeting(); }   // pain, its follow-up, ambition, its follow-up, purpose, cadence
+    } catch (error) { if (error === cancelled) return; throw error; }
+    if (generation !== epoch) return;
     if (!running) return;
     finish();
   }
@@ -1066,6 +1141,7 @@ const Onboarding = (() => {
   // DAWN — the pull-back reveals its whole world, the light blooms, and it speaks its first WHOLE sentences
   // (in the dialogue panel), then HANDS OFF to the tutorial in that same panel — no rhetorical self-answer.
   function finish() {
+    replaying = false;
     running = false;
     if (World.endAwakening) World.endAwakening();      // light floods + the sonar ripple fires (agent holds your gaze)
     if (World.camPullBack) World.camPullBack();
@@ -1087,9 +1163,9 @@ const Onboarding = (() => {
     const readyLine = role === 'orchestrator'
       ? 'i’m ' + NAME + '. the station is yours. give me one task to start with — we can build the rest around the work. your setup stays editable in the dossier.'
       : 'i’m ' + NAME + '. ready for my first assignment. you can change my setup in the agent dossier.';
-    await Dialogue.say([seg(readyLine, 46, 0)]);
+    await say([seg(readyLine, 46, 0)]);
     if (birthFailed) {
-      await Dialogue.say([seg('the model connection failed during setup. check CONNECT before starting a task; your saved setup is still here.', 46, 0)]);
+      await say([seg('the model connection failed during setup. check CONNECT before starting a task; your saved setup is still here.', 46, 0)]);
     }
     if (World.releaseAwakening) World.releaseAwakening();   // hand the agent back to its own autonomous life
     if (taughtCb) taughtCb();                               // → Tutorial.firstCommand opens the tour IN THIS PANEL
@@ -1097,6 +1173,7 @@ const Onboarding = (() => {
 
   // safety teardown if the awakening is abandoned (e.g. DISCONNECT mid-ceremony) — never leak audio or a freeze.
   function stop() {
+    epoch++;
     AU.stop();
     running = false;
     if (kindleTimer) { clearTimeout(kindleTimer); kindleTimer = null; }
@@ -1133,7 +1210,10 @@ const Onboarding = (() => {
     ], async item => {
       if (!item || item.value !== 'go') return;                         // declined → hunt mode owns the gap
       if (running || typeof Dialogue === 'undefined') return;
+      let generation;
       try {
+        epoch++; journal = null; checkpointFn = null; replaying = false; questionCursor = 0;
+        generation = epoch;
         docs = opts.docs || docs; commit = opts.commit || commit;
         notifyFn = opts.notify || notifyFn; getSystem = opts.getSystem || getSystem;
         NAME = opts.name || NAME; persona = opts.persona || persona;
@@ -1144,9 +1224,10 @@ const Onboarding = (() => {
         if (running && Dialogue.isOpen()) Dialogue.close();
         if (running && notifyFn) notifyFn('the dossier is real now — i know who i work for.', 'good');
       } catch (_) {
+        if (generation !== epoch) return;
         try { if (Dialogue.isOpen && Dialogue.isOpen()) Dialogue.close(); } catch (__) {}
       } finally {
-        running = false;
+        if (generation === epoch) running = false;
       }
     });
     return true;

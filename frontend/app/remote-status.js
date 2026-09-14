@@ -21,28 +21,28 @@ document.addEventListener('DOMContentLoaded', () => {
   // Square station surfaces intentionally retain zero corner radius, including
   // their inset controls. No floating status overlay competes with the scene.
   style.textContent = `
-    #gateway-control {display:inline-flex;align-items:center;gap:6px;flex-shrink:0;min-height:32px;padding:4px 8px;border:1px solid transparent;border-radius:0;background:transparent;color:var(--text,#eec88f);font:14px/1.2 monospace;cursor:pointer;text-shadow:none;}
+    #gateway-control {display:inline-flex;align-items:center;gap:6px;flex-shrink:0;min-height:32px;padding:4px 8px;border:1px solid transparent;border-radius:0;background:transparent;color:var(--text,#eec88f);font:18px/1.2 'VT323',monospace;letter-spacing:1px;text-transform:uppercase;cursor:pointer;text-shadow:none;}
     #gateway-control:hover {background:var(--ph-faint,#1e1404);border-color:var(--ph-dim,#b9791c);}
     #gateway-control[data-attention="true"] {color:var(--warn,#ffe97a);border-color:currentColor;}
     #gateway-control .gateway-dot {width:5px;height:5px;background:var(--ok,#7bc88a);flex-shrink:0;}
     #gateway-control[data-attention="true"] .gateway-dot {background:currentColor;}
     #gateway-control:focus-visible,#remote-review :is(button,summary):focus-visible {outline:2px solid var(--ph-bright,#ffd9a3);outline-offset:2px;}
-    #remote-review {box-sizing:border-box;margin:auto;color:var(--text,#eec88f);background:var(--panel2,#0c0704);border:1px solid var(--ph-dim,#b9791c);padding:24px;width:500px;max-width:calc((100vw - 24px) * var(--sn-unzoom,1));max-height:calc((100dvh - 24px) * var(--sn-unzoom,1));overflow:auto;font:14px/1.5 monospace;border-radius:0;text-shadow:none;}
+    #remote-review {box-sizing:border-box;margin:auto;color:var(--text,#eec88f);background:var(--panel2,#0c0704);border:2px solid var(--ph-dim,#b9791c);box-shadow:var(--bezel);padding:24px;width:500px;max-width:calc((100vw - 24px) * var(--sn-unzoom,1));max-height:calc((100dvh - 24px) * var(--sn-unzoom,1));overflow:auto;font:20px/1.3 'VT323',monospace;letter-spacing:.5px;border-radius:0;text-shadow:none;}
     #remote-review::backdrop {background:#000a;}
     #remote-review header {display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:16px;}
-    #remote-review h2 {font:inherit;font-size:20px;color:var(--ph-bright,#ffd9a3);margin:0;}
+    #remote-review h2 {font:inherit;font-size:26px;letter-spacing:2px;text-transform:uppercase;color:var(--ph-bright,#ffd9a3);margin:0;}
     #remote-review p {margin:12px 0;overflow-wrap:anywhere;}
     #remote-review .gateway-state {margin:0;color:var(--ok,#7bc88a);}
     #remote-review[data-connected="false"] .gateway-state {color:var(--warn,#ffe97a);}
     #remote-review article,#remote-review details {border-top:1px solid var(--ph-dim,#b9791c);padding-top:16px;margin-top:16px;}
     #remote-review pre {white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;max-height:200px;overflow:auto;}
-    #remote-review button {font:inherit;color:inherit;background:transparent;border:1px solid var(--ph-dim,#b9791c);padding:6px 10px;min-height:32px;cursor:pointer;border-radius:0;}
+    #remote-review button {font:inherit;letter-spacing:1px;color:var(--ph);background:transparent;border:1px solid var(--ph-dim,#b9791c);padding:6px 10px;min-height:32px;cursor:pointer;border-radius:0;}
     #remote-review button:hover:not(:disabled) {background:var(--ph-faint,#1e1404);}
     #remote-review button:disabled {opacity:.5;cursor:default;}
     #remote-review article button + button {margin-left:8px;}
     #remote-review summary {cursor:pointer;}
     #gateway-announcement {position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
-    @media(max-width:600px){#gateway-control{font-size:11px;padding:4px;}#remote-review{padding:16px;}}
+    @media(max-width:600px){#gateway-control{font-size:15px;padding:4px;}#remote-review{padding:16px;}}
   `;
   document.head.append(style);
   function text(tag, value, target) { const el = document.createElement(tag); el.textContent = value; target.append(el); return el; }
@@ -50,7 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
   review.setAttribute('aria-haspopup', 'dialog'); review.setAttribute('aria-controls', 'remote-review');
   text('span', '', review).className = 'gateway-dot'; review.firstChild.setAttribute('aria-hidden', 'true');
   const label = text('span', 'Gateway', review);
-  document.querySelector('#bottombar .bb-right')?.prepend(review);
+  document.querySelector('#bottombar .bb-right')?.append(review);
   const announcement = document.createElement('span'); announcement.id = 'gateway-announcement'; announcement.setAttribute('role', 'status');
   document.body.append(announcement);
   const dialog = document.createElement('dialog'); dialog.id = 'remote-review'; dialog.setAttribute('aria-labelledby', 'gateway-title');
@@ -150,8 +150,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if (busy) return; busy = true;
     const started = performance.now();
     try {
-      const r = await fetch('/api/state/snapshot', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
-      if (r.status === 403) { connection = 'expired'; return; }
+      let r = await fetch('/api/state/snapshot', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+      if (r.status === 403) {
+        // A restarted server has a new per-launch API token. Renew it through
+        // the existing authenticated gateway, preserving this page and its drafts.
+        const bootstrap = await fetch('/remote/bootstrap', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+        if (!bootstrap.ok) throw new Error('Reconnecting');
+        const credentials = await bootstrap.json();
+        if (!/^[a-f0-9]{64}$/.test(credentials.token || '')) throw new Error('Invalid station credential');
+        window.__STARNET_API_TOKEN__ = credentials.token;
+        r = await fetch('/api/state/snapshot', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+      }
       if (!r.ok) throw new Error('disconnected');
       latest = await r.json(); latency = Math.round(performance.now() - started);
       pending = latest.prompts || [];
@@ -173,4 +182,5 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   render(); poll(); setInterval(poll, 5000);
   window.addEventListener('online', poll);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 });

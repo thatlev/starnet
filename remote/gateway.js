@@ -54,6 +54,11 @@ function proxy(req, res, { port, headers = {}, url = req.url, transformHtml, onU
     }
     reply.on('error', () => res.destroy());
   });
+  // Bound stalled reads; model/tool POSTs may legitimately take longer than a
+  // minute before producing output and must retain their existing lifetime.
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    upstream.setTimeout(45000, () => upstream.destroy(new Error('Gateway transport timed out')));
+  }
   upstream.on('error', () => {
     if (!res.headersSent) json(res, 502, { error: 'The server connection is unavailable. Existing runs are not retried.' });
     else res.destroy();
@@ -100,6 +105,7 @@ function createGateway({ runtimePort, runtimeToken, ownerId, verifyIdentity = gi
       const session = token.length === 64 ? sessions.get(digest(token)) : null;
       if (!session) return json(res, 401, { error: 'GitHub sign-in required' });
       if (req.url === '/remote/logout' && req.method === 'POST') { sessions.delete(digest(token)); return json(res, 200, { ok: true }); }
+      if (req.url === '/remote/bootstrap' && req.method === 'GET') return json(res, 200, { token: runtimeToken });
       if (req.url === '/remote/status' && req.method === 'GET') return json(res, 200, {
         mode: 'remote', host: 'LevServer', user: session.user, expiresAt: session.expiresAt, headless: true
       });

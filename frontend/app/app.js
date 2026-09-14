@@ -3465,9 +3465,21 @@ const App = (() => {
         wake: !!opts.wake,
         persona: (typeof Personas !== 'undefined') ? Personas.get(agent.personaId) : null,   // the voice was chosen on the create screen — the awakening acknowledges it instead of re-asking
         specialty: opts.specialty || null,                   // (reserved) a pre-specced wake skips re-asking the mission; the orchestrator authors it live
+        agentId: agent.id + ":" + agent.createdAt,
+        progress: agent.onboardingProgress,
+        resumeState: {
+          purpose: agent.purpose,
+          hasSavedProfile: typeof DossierStore !== 'undefined' && Object.values(DossierStore.serialize()?.dims || {}).some(rows => Array.isArray(rows) && rows.some(row => row.text && row.weight !== 'seed'))
+        },
+        checkpoint: progress => {
+          if (!agent || agent.onboarded) return;
+          agent.onboardingProgress = progress;
+          persist();
+          if (typeof CloudSave !== 'undefined') CloudSave.flush({ force: true });
+        },
         commit: applyAgentConfig,                            // each answer folds a real doc into the live prompt + persists
         getSystem: () => agent ? agent.systemPrompt : '',    // Interview 2.0: the generated beats (wakemind.js) reason on the LIVE prompt (persona + dossier already folded in)
-        done: () => { if (agent) agent.onboarded = true; persist(); if (typeof KeyCTA !== 'undefined' && KeyCTA.arm) KeyCTA.arm(); },   // the awakening landed — mark onboarded so a later refresh resumes into the game, not back into the ceremony; arm the keyless-brain CTA (shows only if no key is truly stored)
+        done: () => { if (agent) { agent.onboarded = true; delete agent.onboardingProgress; } persist(); if (typeof KeyCTA !== 'undefined' && KeyCTA.arm) KeyCTA.arm(); },   // the awakening landed — mark onboarded so a later refresh resumes into the game, not back into the ceremony; arm the keyless-brain CTA (shows only if no key is truly stored)
         notify: (typeof StationUI !== 'undefined') ? StationUI.notify : null,
         // FIRST COMMAND — once the awakening lands, the agent itself teaches the Commander the one real loop (tutorial.js)
         taught: () => { if (typeof Tutorial !== 'undefined' && Tutorial.firstCommand) Tutorial.firstCommand({ name: agent.name }); }

@@ -3,6 +3,18 @@
 Private hard fork of androoAGI/starnet at 6e076c5d28895d19f938c9eaadc5e1fe21178cf3.
 Upstream history, MIT license and notices are retained.
 
+## Active release: responsive Mac viewer and resumable setup
+
+- [x] Diagnose the white gap, native canvas upload stalls, interview replay and lost save acknowledgments.
+- [x] Add native StarNet loading, direct Retina 2D rendering without the costly decorative barrel-warp copy, and audio-clock scheduling.
+- [x] Save answered interview questions and completed model replies; resume the pending question and local text draft.
+- [x] Preserve real concurrent-save protection while reconciling an already delivered save after a lost ACK.
+- [x] Match Gateway to StarNet's VT323/phosphor design and recover transport and runtime credentials automatically.
+- [ ] Complete regression, native interaction, loading and reconnect checks.
+- [ ] Deploy the reviewed server release, rebuild/install the Mac viewer, preserve the user's station, and push main.
+
+The earlier speculative asset/protocol optimization was discarded when cancelled. The subsequent responsiveness, audio, setup persistence, Gateway styling and reconnect requests are included here. No production tasks are created by verification. The user has now created a station and answered onboarding questions; preserve that state instead of expecting an empty setup.
+
 ## Active release: persistent LevServer station
 
 - [x] Inspect upstream lifecycle, persistence, authentication and existing server access.

@@ -15,7 +15,7 @@ test('gateway requires the verified numeric GitHub owner, expires sessions and n
   const base = 'http://127.0.0.1:' + await listen(gateway);
   const login = token => fetch(base + '/remote/login', { method: 'POST', body: JSON.stringify({ githubToken: token }) });
   try {
-    for (const route of ['/', '/api/state/snapshot', '/api/run', '/app/app.js']) assert.equal((await fetch(base + route)).status, 401);
+    for (const route of ['/', '/remote/bootstrap', '/api/state/snapshot', '/api/run', '/app/app.js']) assert.equal((await fetch(base + route)).status, 401);
     assert.equal(calls, 0);
     assert.equal((await login('bad')).status, 401);
     assert.equal((await login('someone')).status, 403);
@@ -23,6 +23,9 @@ test('gateway requires the verified numeric GitHub owner, expires sessions and n
     const headers = { Authorization: 'Bearer ' + session.token };
     const html = await (await fetch(base + '/', { headers })).text();
     assert.match(html, /__STARNET_REMOTE__/);
+    const bootstrap = await fetch(base + '/remote/bootstrap', { headers });
+    assert.deepEqual(await bootstrap.json(), { token: 'private' }, 'only the authenticated gateway can renew the station token');
+    assert.equal((await fetch(base + '/remote/bootstrap', { headers: { ...headers, Origin: 'https://evil.example' } })).status, 403);
     assert.equal((await fetch(base + '/', { headers: { ...headers, Origin: 'https://evil.example' } })).status, 403);
     assert.equal(await new Promise(resolve => { const r = http.get(base + '/', { headers: { ...headers, Host: 'evil.example' } }, reply => { reply.resume(); resolve(reply.statusCode); }); r.on('error', () => resolve(0)); }), 403);
     assert.equal(calls, 1);

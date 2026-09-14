@@ -50,6 +50,22 @@ const CloudSave = (() => {
   function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
   function isSave(d) { return !!(d && typeof d === 'object' && d.schema === 'starnet.save' && d.agent && typeof d.agent === 'object'); }
 
+  // A close can deliver the save while its ACK dies with the viewer. Compare
+  // content, not per-window transport stamps, before declaring an offline conflict.
+  function sameContent(a, b) {
+    const canonical = value => {
+      if (Array.isArray(value)) return value.map(canonical);
+      if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
+      return value;
+    };
+    const content = doc => {
+      const copy = { ...doc };
+      for (const key of ['updatedAt', '_saveClient', '_saveRevision', '_saveDirty']) delete copy[key];
+      return JSON.stringify(canonical(copy));
+    };
+    return content(a) === content(b);
+  }
+
   // this build's readable schema ceiling. A save/remote whose version exceeds this was written by a NEWER
   // StarNet and MUST NOT be adopted into the cache (that would clobber the local doc with fields this code
   // can't read). Mirror Save.CURRENT when available; fall back to a literal only if Save hasn't loaded yet.
@@ -267,6 +283,10 @@ const CloudSave = (() => {
     // contamination, brutal to debug). Leave localStorage byte-unchanged and raise the honest update gate.
     if (isFutureSave(remote)) return futureSentinel(num(remote.version));
     revision = num(remote._saveRevision);
+    if (isSave(local) && local._saveDirty && sameContent(local, remote)) {
+      local = { ...remote, _saveDirty: false };
+      try { localStorage.setItem('starnet.save', JSON.stringify(local)); } catch (_) {}
+    }
     if (isSave(local) && local._saveDirty) {
       // Offline edits are still based on their original revision. Preserve them through the
       // same conflict receipt; never relabel a stale local snapshot with the remote revision.
@@ -329,7 +349,7 @@ const CloudSave = (() => {
       if (!isSave(pending)) return;
       try {
         const blob = new Blob([JSON.stringify(pending)], { type: 'text/plain;charset=UTF-8' });
-        if (navigator.sendBeacon) navigator.sendBeacon(beaconUrl(), blob);
+        if (!activeFlushes.size && navigator.sendBeacon) navigator.sendBeacon(beaconUrl(), blob);
       } catch (_) {}
       // confirmable path: if the page survives (minimize / hide-to-tray), this fetch lands, clears `pending`,
       // and honestly stamps health. force:true — a hide is a potential death, not a moment to honor backoff.

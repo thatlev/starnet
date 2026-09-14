@@ -90,15 +90,15 @@ async function connect(o) {
   function startTunnel() {
     ready = false;
     ssh = spawn('ssh', ['-N', '-T', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes',
-      '-o', 'StrictHostKeyChecking=yes', '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'ControlPersist=no', '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=3',
+      '-o', 'StrictHostKeyChecking=yes', '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'ControlPersist=no', '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=2',
       '-o', 'ConnectTimeout=12', '-L', '127.0.0.1:' + tunnelPort + ':127.0.0.1:' + remotePort, cfg.host],
     { stdio: ['ignore', 'ignore', 'pipe'] });
     // SSH errors may contain host paths; never print any authentication payload.
     ssh.stderr.on('data', () => {});
     ssh.on('error', () => {});
-    ssh.once('exit', () => {
+    ssh.once('close', () => {
       ready = false;
-      if (!stopping) { console.error('SSH connection lost; reconnecting. Server work continues.'); reconnectTimer = setTimeout(startTunnel, delay); delay = Math.min(delay * 2, 15000); }
+      if (!stopping) { console.error('SSH connection lost; reconnecting. Server work continues.'); reconnectTimer = setTimeout(startTunnel, delay); delay = Math.min(delay * 2, 5000); }
     });
     const current = ssh;
     waitPort(tunnelPort, current).then(() => { if (ssh === current && current.exitCode === null) { ready = true; delay = 1000; } }).catch(() => current.kill());

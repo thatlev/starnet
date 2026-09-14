@@ -210,7 +210,7 @@ const Harness = (() => {
     return init;
   }
   function ensureApiToken() {
-    if (!apiToken && typeof window !== 'undefined' && window.__STARNET_API_TOKEN__) apiToken = String(window.__STARNET_API_TOKEN__);
+    if (typeof window !== 'undefined' && window.__STARNET_API_TOKEN__ && (!apiToken || window.__STARNET_REMOTE__)) apiToken = String(window.__STARNET_API_TOKEN__);
     if (apiToken) return Promise.resolve(apiToken);
     if (!apiTokenPromise) apiTokenPromise = Promise.resolve('').then(t => { apiTokenPromise = null; return t; });
     return apiTokenPromise;

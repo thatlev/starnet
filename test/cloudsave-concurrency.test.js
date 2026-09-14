@@ -81,6 +81,16 @@ function client({ beforePost = async () => {}, onReload = () => {}, cache = new 
     const untouched = JSON.parse(changedCache.get('starnet.save'));
     assert.equal(untouched._saveDirty, true, 'ACK cannot mark a different newer browser document clean');
     assert.equal(untouched._saveRevision, unsent._saveRevision, 'ACK cannot rebase an unsubmitted edit');
+    const lostAckCache = new Map();
+    const delivered = structuredClone(store.load('agent'));
+    delivered._saveDirty = true; delivered._saveRevision--;
+    delivered._saveClient = 'a-window-that-closed'; delivered.updatedAt--;
+    lostAckCache.set('starnet.save', JSON.stringify(delivered));
+    const reopened = client({ cache: lostAckCache, beforePost: () => { throw Error('identical saved content must not be reposted'); } });
+    const recovered = await reopened.reconcile(delivered);
+    assert.equal(recovered._saveDirty, false, 'lost ACK on close is reconciled as already saved');
+    assert.equal(reopened.revision(), store.load('agent')._saveRevision);
+    assert.equal(reopened.health().conflict, null, 'a new window ID cannot invent a conflict for identical content');
     console.log('cloudsave-concurrency: two clients, conflict export, update refusal, offline restart and queued cache acknowledgements PASS');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

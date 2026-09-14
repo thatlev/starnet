@@ -13,9 +13,12 @@ mkdir -p "$source_root/work/mac-build"
 build_root=$(mktemp -d "$source_root/work/mac-build/build.XXXXXX")
 app_build="$build_root/StarNet Remote.app"
 mkdir -p "$app_build/Contents/MacOS" "$app_build/Contents/Resources/sidecar" "$app_build/Contents/Resources/remote"
-swiftc -target "$(uname -m)-apple-macos13.0" -O -framework Cocoa -framework WebKit "$source_root/remote/StationMac.swift" -o "$app_build/Contents/MacOS/StarNetRemote"
-cp "$source_root/remote/cli.js" "$source_root/remote/gateway.js" "$app_build/Contents/Resources/remote/"
+swiftc -target "$(uname -m)-apple-macos13.0" -O -framework Cocoa -framework WebKit "$source_root/remote/LoadingView.swift" "$source_root/remote/StationMac.swift" -o "$app_build/Contents/MacOS/StarNetRemote"
+cp "$source_root/remote/cli.js" "$source_root/remote/gateway.js" "$source_root/remote/startup-observer.js" "$app_build/Contents/Resources/remote/"
 cp "$source_root/sidecar/apiauth.js" "$app_build/Contents/Resources/sidecar/"
+cp "$source_root/frontend/assets/brand/starnet-logo.png" "$app_build/Contents/Resources/LoadingLogo.png"
+cp "$source_root/NOTICE.md" "$app_build/Contents/Resources/NOTICE.md"
+cp "$source_root/remote/assets/VT323.ttf" "$app_build/Contents/Resources/VT323.ttf"
 cp "$source_root/src-tauri/icons/icon.icns" "$app_build/Contents/Resources/Station.icns"
 cat > "$app_build/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -26,8 +29,8 @@ cat > "$app_build/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>StarNet Remote</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
-<key>CFBundleVersion</key><string>2</string>
-<key>CFBundleShortVersionString</key><string>0.1.1</string>
+<key>CFBundleVersion</key><string>3</string>
+<key>CFBundleShortVersionString</key><string>0.1.2</string>
 <key>CFBundleIconFile</key><string>Station</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>

@@ -1615,8 +1615,8 @@ const World = (() => {
   // Output pixel -> pre-CRT scene pixel. Match the renderer's six-step inverse,
   // including overscan, BEFORE undoing the camera. Drag deltas remain screen-space.
   function uncurvePoint(c) {
-    if (CRT.curve <= 0 || document.body.classList.contains('no-scan')) return c;
-    const hw = cv.width / 2, hh = cv.height / 2, over = overAmt(), k = Math.max(0, +CRT.curve || 0);
+    if (curveAmount() <= 0 || document.body.classList.contains('no-scan')) return c;
+    const hw = cv.width / 2, hh = cv.height / 2, over = overAmt(), k = curveAmount();
     const nx = (c.x - hw) / hw / over, ny = (c.y - hh) / hh / over;
     const ro = Math.hypot(nx, ny);
     let rs = ro;
@@ -1631,10 +1631,10 @@ const World = (() => {
     return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && x < cv.width && y >= 0 && y < cv.height ? { x, y } : null;
   }
   function curvePoint(c) {
-    if (CRT.curve <= 0 || document.body.classList.contains('no-scan')) return c;
+    if (curveAmount() <= 0 || document.body.classList.contains('no-scan')) return c;
     const hw = cv.width / 2, hh = cv.height / 2;
     const nx = (c.x - hw) / hw, ny = (c.y - hh) / hh;
-    const f = (1 - Math.max(0, +CRT.curve || 0) * (nx * nx + ny * ny)) * overAmt();
+    const f = (1 - curveAmount() * (nx * nx + ny * ny)) * overAmt();
     return { x: hw + nx * f * hw, y: hh + ny * f * hh };
   }
   function toWorld(ev) {
@@ -6337,9 +6337,14 @@ const World = (() => {
   // triangle mesh: a mesh draws the picture as thousands of triangles whose seams line up into the diagonal
   // stripes; a per-pixel remap has no triangles, so there are no seams and no diagonal lines. Curve is identical.
   // the two aperture knobs, clamped to sane ranges — read by BOTH warp paths so they can never disagree
-  function vigAmt() { if (CRT.curve <= 0) return 0; const v = +CRT.vig; return Number.isFinite(v) ? (v < 0 ? 0 : v > 1 ? 1 : v) : 0.30; }
-  function overAmt() { if (CRT.curve <= 0) return 1; const o = +CRT.over; return Number.isFinite(o) && o >= 1 ? (o > 1.6 ? 1.6 : o) : 1; }
-  function sharpAmt() { return typeof WorldRenderer !== 'undefined' ? Math.max(0, Math.min(.6, +CRT.sharpen || 0)) : 0; }
+  // WebKit's canvas → WebGL → canvas warp forces a synchronous CPU readback
+  // every frame. The native viewer keeps the Retina 2D surface on its compositor;
+  // all lighting, bloom, CRT grain and scanlines remain. Hit testing shares the
+  // same zero-warp geometry so the visible character and its target stay aligned.
+  function curveAmount() { return window.__STARNET_NATIVE__ ? 0 : Math.max(0, +CRT.curve || 0); }
+  function vigAmt() { if (curveAmount() <= 0) return 0; const v = +CRT.vig; return Number.isFinite(v) ? (v < 0 ? 0 : v > 1 ? 1 : v) : 0.30; }
+  function overAmt() { if (curveAmount() <= 0) return 1; const o = +CRT.over; return Number.isFinite(o) && o >= 1 ? (o > 1.6 ? 1.6 : o) : 1; }
+  function sharpAmt() { if (window.__STARNET_NATIVE__) return 0; return typeof WorldRenderer !== 'undefined' ? Math.max(0, Math.min(.6, +CRT.sharpen || 0)) : 0; }
 
   function buildLUT(k, W, H) {
     const over = overAmt();
@@ -6369,8 +6374,8 @@ const World = (() => {
     _lut = lut; _lutKey = key;
   }
   function drawCurve(now) {
-    if (!cv || (CRT.curve <= 0 && !sharpAmt()) || document.body.classList.contains('no-scan')) return;
-    const k = Math.max(0, +CRT.curve || 0), W = cv.width, H = cv.height;
+    if (!cv || (curveAmount() <= 0 && !sharpAmt()) || document.body.classList.contains('no-scan')) return;
+    const k = curveAmount(), W = cv.width, H = cv.height;
     if (!_glFailed && drawCurveGL(k, W, H)) return;   // GPU path (near-free); on any failure it flips _glFailed
     drawCurveCPU(k, W, H);                             // CPU fallback (per-pixel LUT) — identical look, heavier
   }

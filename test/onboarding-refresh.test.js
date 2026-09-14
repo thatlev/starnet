@@ -3,9 +3,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../frontend/app/onboarding.js'), 'utf8');
-async function quickRun(answers, stopAt, wake = false) {
+async function quickRun(answers, stopAt, wake = false, progress = null, resumeState = null) {
   const timers = new Map(), prompts = [], stages = [], writes = [], postures = [], beliefs = [];
-  let timerId = 0, done = 0, taught = 0, context;
+  let timerId = 0, done = 0, taught = 0, context, checkpoint = progress;
   const storage = new Map();
   context = vm.createContext({
     console, Promise, Math,
@@ -27,7 +27,7 @@ async function quickRun(answers, stopAt, wake = false) {
     },
     DossierStore: { upsert(...args) { beliefs.push(args); } },
     AutonomyStore: { applyPreset(value) { postures.push(value); } },
-    opts: { name:'NOVA', wake, docs:{}, commit(patch) { writes.push(patch); }, done() { done++; }, taught() { taught++; } }
+    opts: { name:'NOVA', wake, progress, resumeState, checkpoint(value) { checkpoint = JSON.parse(JSON.stringify(value)); }, docs:{}, commit(patch) { writes.push(patch); }, done() { done++; }, taught() { taught++; } }
   });
   vm.runInContext(source, context);
   vm.runInContext('Onboarding.start(opts)', context);
@@ -38,7 +38,7 @@ async function quickRun(answers, stopAt, wake = false) {
     if (taught || stopAt && prompts.length >= stopAt) break;
   }
   vm.runInContext('Onboarding.stop()', context);
-  return { prompts, stages, writes, postures, beliefs, done, taught, storage };
+  return { prompts, stages, writes, postures, beliefs, done, taught, storage, checkpoint };
 }
 (async () => {
   const result = await quickRun([{value:'quick'}, {value:'Help me prepare weekly client updates.'}, {value:'wait'}]);
@@ -62,5 +62,20 @@ async function quickRun(answers, stopAt, wake = false) {
   const stopped = await quickRun([{value:'quick'}, {value:'Should never be written'}], 2);
   assert.equal(stopped.writes.length, 0, 'abandoning a question does not commit its late answer');
   assert.equal(stopped.taught, 0, 'abandoned setup cannot open the tutorial');
+  const interrupted = await quickRun([{value:'quick'}, {value:'My exact direction'}, {value:'wait'}], 3);
+  assert.equal(interrupted.checkpoint.nodes.length, 2, 'pace and submitted purpose checkpoint before the next question');
+  const resumed = await quickRun([{value:'wait'}], null, false, interrupted.checkpoint);
+  assert.equal(resumed.prompts.length, 1, 'reopening skips the two answered questions');
+  assert.equal(resumed.prompts[0].options[0].value, 'wait', 'resume reaches the unanswered posture choice');
+  assert.equal(resumed.writes[0].purpose, 'My exact direction', 'restore keeps the original answer verbatim');
+  assert.equal(resumed.done, 1, 'resumed interview completes once');
+  assert.deepEqual(resumed.postures, ['wait'], 'resume does not invent a broader autonomy grant');
+  const legacy = await quickRun([{value:'Finish my station'}, {value:'wait'}], null, false, null, {hasSavedProfile:true, purpose:''});
+  assert.equal(legacy.prompts.length, 2, 'older saved profiles skip the already completed personal interview');
+  assert.equal(legacy.writes[0].purpose, 'Finish my station');
+  assert.equal(legacy.beliefs.length, 0, 'migration does not rewrite saved profile answers');
+  const legacyPurpose = await quickRun([{value:'wait'}], null, false, null, {hasSavedProfile:true, purpose:'Already answered'});
+  assert.equal(legacyPurpose.prompts.length, 1, 'migration preserves the existing station direction too');
+  assert.equal(legacyPurpose.writes.length, 0);
   console.log('onboarding-refresh: OK (quick setup, exact answers, posture, deferred profile and cancellation)');
 })().catch(error => { console.error(error); process.exitCode = 1; });
