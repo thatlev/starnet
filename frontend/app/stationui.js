@@ -4399,6 +4399,10 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
         (wantsOAuthSignin ? '<button class="bb sm prov-addkey" data-act="prov-oauth-signin" data-provider="' + esc(p.id) + '" aria-label="Sign in to ' + esc(p.name) + '" title="device-code sign-in — no API key needed">⏼ SIGN IN</button>' : '') +
         (wantsInline
           ? '<div class="key-edit prov-key-edit" id="prov-key-edit-' + esc(p.id) + '" hidden>' +
+            (p.id === 'custom' && !endpointConfigured
+              ? '<input type="url" class="key-input base-input" id="prov-base-in-custom" placeholder="https://api.z.ai/api/coding/paas/v4" aria-label="Custom OpenAI-compatible base URL" autocomplete="url" spellcheck="false">' +
+                '<span class="dim prov-base-hint">z.ai Coding Plan: https://api.z.ai/api/coding/paas/v4</span>'
+              : '') +
             '<input type="password" class="key-input" id="prov-key-in-' + esc(p.id) + '" placeholder="paste ' + esc(p.name) + ' key…" autocomplete="off" spellcheck="false">' +
             '<button class="bb sm" data-act="prov-add-save" data-provider="' + esc(p.id) + '">SAVE</button>' +
             '</div>'
@@ -4813,8 +4817,36 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       const v = inp ? inp.value.trim() : '';
       if (!v) { sfx('bad'); if (inp) inp.focus(); return; }
       if (!h || !h.setKey) { sfx('bad'); return; }
+      // CUSTOM is an OpenAI-compatible adapter, not a provider with a discoverable default endpoint. On its
+      // first connection the endpoint lives beside the key; validate both together so a rejection preserves the
+      // prior credential and endpoint. Once saved, the existing STATION LINK editor remains the update path.
+      let baseUrlOverride;
+      if (provider === 'custom' && !(h.getBaseUrl && h.getBaseUrl(provider))) {
+        const baseInp = body.querySelector('#prov-base-in-custom');
+        const rawBase = baseInp ? baseInp.value.trim() : '';
+        if (!rawBase) {
+          notify('✕ enter the custom base URL first (for z.ai Coding Plan: https://api.z.ai/api/coding/paas/v4)', 'bad');
+          sfx('bad');
+          if (baseInp) baseInp.focus();
+          return;
+        }
+        try {
+          const parsed = new URL(rawBase);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('unsupported URL scheme');
+          baseUrlOverride = rawBase.replace(/\/+$/, '');
+        } catch (_) {
+          notify('✕ that custom base URL does not look valid', 'bad');
+          sfx('bad');
+          if (baseInp) baseInp.focus();
+          return;
+        }
+      }
       // same proven-store contract as the key-list paths: success UI only after setKey resolves.
-      Promise.resolve(h.validateAndSetKey ? h.validateAndSetKey(v, provider) : h.setKey(v, provider)).then(() => {
+      Promise.resolve(h.validateAndSetKey
+        ? h.validateAndSetKey(v, provider, baseUrlOverride)
+        : baseUrlOverride
+          ? Promise.resolve(h.setBaseUrl(baseUrlOverride, provider)).then(() => h.setKey(v, provider))
+          : h.setKey(v, provider)).then(() => {
         invalidateProviderHealth(provider);
         notify('✓ connected ' + provName(provider) + ' API key — ' + keyStoreClause(), 'good');
         if (typeof ModelDock !== 'undefined' && ModelDock.reconcile) ModelDock.reconcile().catch(() => ModelDock.reflect && ModelDock.reflect());

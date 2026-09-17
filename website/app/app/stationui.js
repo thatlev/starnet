@@ -4053,6 +4053,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
      the real Harness store; nothing here is simulated. Secrets are shown MASKED only — the
      full key is never written into the DOM (truthful-telemetry + don't-leak-the-key). */
   const PROVIDERS = [
+    { id: 'levserver', name: 'GATEWAY', endpoint: 'private model gateway', blurb: 'server-held credentials', live: true },
     // STARNET MANAGED is the one provider with no credential to paste and no account to sign into here: it
     // runs on the credits balance a linked station already has. It is also the one provider that must be able
     // to DISAPPEAR — see creditsProviderState() — because offering it on a station with no cloud configured
@@ -4398,6 +4399,10 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
         (wantsOAuthSignin ? '<button class="bb sm prov-addkey" data-act="prov-oauth-signin" data-provider="' + esc(p.id) + '" aria-label="Sign in to ' + esc(p.name) + '" title="device-code sign-in — no API key needed">⏼ SIGN IN</button>' : '') +
         (wantsInline
           ? '<div class="key-edit prov-key-edit" id="prov-key-edit-' + esc(p.id) + '" hidden>' +
+            (p.id === 'custom' && !endpointConfigured
+              ? '<input type="url" class="key-input base-input" id="prov-base-in-custom" placeholder="https://api.z.ai/api/coding/paas/v4" aria-label="Custom OpenAI-compatible base URL" autocomplete="url" spellcheck="false">' +
+                '<span class="dim prov-base-hint">z.ai Coding Plan: https://api.z.ai/api/coding/paas/v4</span>'
+              : '') +
             '<input type="password" class="key-input" id="prov-key-in-' + esc(p.id) + '" placeholder="paste ' + esc(p.name) + ' key…" autocomplete="off" spellcheck="false">' +
             '<button class="bb sm" data-act="prov-add-save" data-provider="' + esc(p.id) + '">SAVE</button>' +
             '</div>'
@@ -4812,8 +4817,36 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       const v = inp ? inp.value.trim() : '';
       if (!v) { sfx('bad'); if (inp) inp.focus(); return; }
       if (!h || !h.setKey) { sfx('bad'); return; }
+      // CUSTOM is an OpenAI-compatible adapter, not a provider with a discoverable default endpoint. On its
+      // first connection the endpoint lives beside the key; validate both together so a rejection preserves the
+      // prior credential and endpoint. Once saved, the existing STATION LINK editor remains the update path.
+      let baseUrlOverride;
+      if (provider === 'custom' && !(h.getBaseUrl && h.getBaseUrl(provider))) {
+        const baseInp = body.querySelector('#prov-base-in-custom');
+        const rawBase = baseInp ? baseInp.value.trim() : '';
+        if (!rawBase) {
+          notify('✕ enter the custom base URL first (for z.ai Coding Plan: https://api.z.ai/api/coding/paas/v4)', 'bad');
+          sfx('bad');
+          if (baseInp) baseInp.focus();
+          return;
+        }
+        try {
+          const parsed = new URL(rawBase);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('unsupported URL scheme');
+          baseUrlOverride = rawBase.replace(/\/+$/, '');
+        } catch (_) {
+          notify('✕ that custom base URL does not look valid', 'bad');
+          sfx('bad');
+          if (baseInp) baseInp.focus();
+          return;
+        }
+      }
       // same proven-store contract as the key-list paths: success UI only after setKey resolves.
-      Promise.resolve(h.validateAndSetKey ? h.validateAndSetKey(v, provider) : h.setKey(v, provider)).then(() => {
+      Promise.resolve(h.validateAndSetKey
+        ? h.validateAndSetKey(v, provider, baseUrlOverride)
+        : baseUrlOverride
+          ? Promise.resolve(h.setBaseUrl(baseUrlOverride, provider)).then(() => h.setKey(v, provider))
+          : h.setKey(v, provider)).then(() => {
         invalidateProviderHealth(provider);
         notify('✓ connected ' + provName(provider) + ' API key — ' + keyStoreClause(), 'good');
         if (typeof ModelDock !== 'undefined' && ModelDock.reconcile) ModelDock.reconcile().catch(() => ModelDock.reflect && ModelDock.reflect());
@@ -6099,7 +6132,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       '<label class="set-row"><input type="checkbox" id="set-autostart" disabled> LAUNCH AT LOGIN <span class="dim">— ' + (lifecycleDesktop ? 'start StarNet automatically when you sign in' : 'desktop app only') + '</span></label>' +
       '<label class="set-row"><input type="checkbox" id="set-start-minimized" disabled> START MINIMIZED TO TRAY <span class="dim">— ' + (lifecycleDesktop ? 'begin each launch hidden; open from the tray icon' : 'desktop app only') + '</span></label>' +
       '<label class="set-row"><input type="checkbox" id="set-close-to-tray" disabled> CLOSE WINDOW TO TRAY <span class="dim">— ' + (lifecycleDesktop ? 'X hides StarNet; tray Quit stops it' : 'desktop app only') + '</span></label>' +
-      '<p class="set-about" id="lifecycle-desc">' + (lifecycleDesktop ? 'Checking what runs in the background…' : 'The desktop app can stay supervised in the system tray. This browser tab has no background process.') + '</p>' +
+      '<p class="set-about" id="lifecycle-desc">' + (window.__STARNET_REMOTE__ ? 'Your gateway keeps accepted tasks, workflows and goals running when you close this app. Use Stop to cancel work.' : lifecycleDesktop ? 'Checking what runs in the background…' : 'The desktop app can stay supervised in the system tray. This browser tab has no background process.') + '</p>' +
       // ADVANCED — env-only runtime knobs, now editable + persisted server-side (P1-9). PRECEDENCE is spelled out
       // in the card: an explicit environment variable ALWAYS wins over a value saved here (a deploy stays in control).
       '<h4 class="ms-h">Runtime limits <span class="dim">— optional ceilings and timeouts</span></h4>' +

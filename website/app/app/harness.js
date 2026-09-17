@@ -210,7 +210,7 @@ const Harness = (() => {
     return init;
   }
   function ensureApiToken() {
-    if (!apiToken && typeof window !== 'undefined' && window.__STARNET_API_TOKEN__) apiToken = String(window.__STARNET_API_TOKEN__);
+    if (typeof window !== 'undefined' && window.__STARNET_API_TOKEN__ && (!apiToken || window.__STARNET_REMOTE__)) apiToken = String(window.__STARNET_API_TOKEN__);
     if (apiToken) return Promise.resolve(apiToken);
     if (!apiTokenPromise) apiTokenPromise = Promise.resolve('').then(t => { apiTokenPromise = null; return t; });
     return apiTokenPromise;
@@ -231,6 +231,15 @@ const Harness = (() => {
     // they are configured identically in a browser build and a packaged one. Probing after the return would
     // leave configured('starnet') false forever anywhere that isn't Tauri — including every dev session.
     await refreshCreditsConfigured();
+    if (typeof window !== 'undefined' && window.__STARNET_REMOTE__) {
+      try {
+        const response = await fetch('/api/providers');
+        const info = await response.json();
+        const rows = Array.isArray(info) ? info : (info.providers || []);
+        for (const row of rows) _configuredByProvider[row.id] = !!row.configured;
+        if (!localStorage.getItem('starnet.byok.prov') && _configuredByProvider.levserver) setProv('levserver');
+      } catch (_) {}
+    }
     if (!DESKTOP) return;
     let loaded = false;
     try {
@@ -290,6 +299,7 @@ const Harness = (() => {
      key (runtimeKey), so we report configured without one — that's what lets a fresh origin auto-resume. */
   function normalizeProviderId(provider) {
     const p = String(provider || getProv() || 'openrouter').trim().toLowerCase();
+    if (p === 'levserver') return 'levserver';
     if (p === 'codex' || p === 'openai-codex') return 'codex';
     if (p === 'openai' || p === 'openai-api') return 'openai';
     if (p === 'anthropic' || p === 'claude') return 'anthropic';
@@ -347,6 +357,7 @@ const Harness = (() => {
     // STARNET MANAGED is configured IFF the sidecar reports live credits — in BOTH modes. It must not fall
     // through to the keyless branch below, which would answer "configured" for every station simply because
     // there is no key to look for, and claim a station can run on credits it has never been linked to.
+    if (typeof window !== 'undefined' && window.__STARNET_REMOTE__ && _configuredByProvider[p]) return true;
     if (p === 'starnet') return !!_configuredByProvider.starnet;
     return DESKTOP ? !!(_configuredByProvider[p] || (p === 'openrouter' && _configured)) : (DEVMODE || !providerNeedsKey(p) || !!getKey(p));
   }
@@ -368,6 +379,7 @@ const Harness = (() => {
     if (p === 'grok' || p === 'kimi') return DESKTOP ? !!_configuredByProvider[p] : (getProv() === p);
     if (p === 'ollama') return false;                      // an endpoint is configuration, never a credential
     if (p === 'custom' && !getKey(p)) return false;        // a keyless custom endpoint must not manufacture a key row
+    if (typeof window !== 'undefined' && window.__STARNET_REMOTE__ && _configuredByProvider[p]) return true;
     if (DESKTOP) return !!(_configuredByProvider[p] || (p === 'openrouter' && _configured));
     if (!!readScoped(LS.key, p)) return true;              // a real key is stored in this browser
     // DEV seed: the host may hold a server-side runtime key for the seeded provider. It is not a given —
@@ -480,7 +492,7 @@ const Harness = (() => {
       med: 'medium', mid: 'medium', medium: 'medium',
       high: 'high',
       extra: 'xhigh', xtra: 'xhigh', extrahigh: 'xhigh', xhigh: 'xhigh',
-      max: 'max'
+      ultra: 'ultra', max: 'max'
     };
     return map[key] || 'medium';
   }
@@ -645,18 +657,23 @@ const Harness = (() => {
 
   // Replace a credential as one user-visible operation: prove the candidate first, then commit it. Validation
   // never mutates provider state, so a rejection/timeout leaves the previous working key untouched.
-  async function validateAndSetKey(key, provider) {
+  async function validateAndSetKey(key, provider, baseUrlOverride) {
     const p = normalizeProviderId(provider || getProv());
     const candidate = String(key || '').trim();
     if (!candidate) return setKey('', p);
+    // Custom OpenAI-compatible providers cannot be validated against the empty registry default. The Settings
+    // card supplies a first-time endpoint here; do not persist it until the candidate key has passed validation,
+    // so a bad z.ai/custom key still leaves the previous key and endpoint untouched.
+    const baseUrl = baseUrlOverride == null ? (getBaseUrl(p) || '') : String(baseUrlOverride || '').trim();
     const r = await fetch('/api/providers/validate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: p, key: candidate, baseUrl: getBaseUrl(p) || '', model: p === getProv() ? getModel() : '' })
+      body: JSON.stringify({ provider: p, key: candidate, baseUrl, model: p === getProv() ? getModel() : '' })
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || !j.credentialVerified) {
       throw new Error(String(j.error || 'the provider did not verify this key') + ' — your previous key is unchanged');
     }
+    if (baseUrlOverride != null) await Promise.resolve(setBaseUrl(baseUrl, p));
     await Promise.resolve(setKey(candidate, p));
     return Object.assign({}, j, { stored: true });
   }
@@ -688,7 +705,7 @@ const Harness = (() => {
     const model = getModel(), provider = getProv(), key = getKey(provider), reasoningEffort = getReasoningEffort(provider);
     // Codex authenticates by an OAuth token (server-side); the desktop build keeps the key in the
     // sidecar's env (keychain). Neither needs a key sent from here.
-    if (providerNeedsKey(provider) && !DESKTOP && !DEVMODE && !key) throw new Error('no API key set');
+    if (providerNeedsKey(provider) && !DESKTOP && !DEVMODE && !key && !configured(provider)) throw new Error('no API key set');
     if (!model) throw new Error('no model selected');
 
     let res;
@@ -735,6 +752,7 @@ const Harness = (() => {
       if (!DESKTOP && !DEVMODE) {
         try { const pool = JSON.parse(readScoped(LS.keyPool, provider) || '[]'); if (Array.isArray(pool) && pool.length) reqBody.keyPool = pool; } catch (_) {}
       }
+      if (typeof window !== 'undefined' && window.__STARNET_REMOTE__) reqBody.requestId = crypto.randomUUID();
       res = await fetch('/api/run', {
         method: 'POST', signal,
         headers: { 'Content-Type': 'application/json' },
@@ -776,7 +794,8 @@ const Harness = (() => {
         // thinking to itself (truthful-telemetry + honest-loot). The caller's own promise result is unaffected — the
         // switch below still latches runId/endReason locally from these same events.
         const suppressBus = internal && (name === 'agent.run.start' || name === 'agent.run.end');
-        if (!suppressBus && typeof U !== 'undefined' && U.bus) { try { U.bus.emit(name, payload); } catch (_) {} }
+        const remoteEvents = typeof window !== 'undefined' && window.__STARNET_REMOTE__ && !internal;
+        if (!suppressBus && !remoteEvents && typeof U !== 'undefined' && U.bus) { try { U.bus.emit(name, payload); } catch (_) {} }
         switch (name) {
           // latch the LEAD's runId on the FIRST run.start only. Stage 2: a delegated worker's run.start/end/error
           // are forwarded onto THIS (the lead's) stream for the floor animation — they still reach U.bus above, but

@@ -745,6 +745,7 @@ const App = (() => {
   }
   function normalizeProviderId(provider) {
     const p = String(provider || 'openrouter').trim().toLowerCase();
+    if (p === 'levserver') return 'levserver';
     if (p === 'codex' || p === 'openai-codex') return 'codex';
     if (p === 'openai' || p === 'openai-api') return 'openai';
     if (p === 'anthropic' || p === 'claude') return 'anthropic';
@@ -780,7 +781,7 @@ const App = (() => {
   }
   function providerKeyPlaceholder(provider, configured) {
     const p = normalizeProviderId(provider);
-    if (configured) return 'stored locally - leave blank to keep';
+    if (configured) return provider === 'levserver' ? 'stored on your gateway - leave blank to keep' : 'stored locally - leave blank to keep';
     if (p === 'openai') return 'sk-...  -  platform.openai.com/api-keys';
     if (p === 'anthropic') return 'sk-ant-...  -  console.anthropic.com/settings/keys';
     if (p === 'gemini') return 'AIza...  -  aistudio.google.com/app/apikey';
@@ -3464,9 +3465,21 @@ const App = (() => {
         wake: !!opts.wake,
         persona: (typeof Personas !== 'undefined') ? Personas.get(agent.personaId) : null,   // the voice was chosen on the create screen — the awakening acknowledges it instead of re-asking
         specialty: opts.specialty || null,                   // (reserved) a pre-specced wake skips re-asking the mission; the orchestrator authors it live
+        agentId: agent.id + ":" + agent.createdAt,
+        progress: agent.onboardingProgress,
+        resumeState: {
+          purpose: agent.purpose,
+          hasSavedProfile: typeof DossierStore !== 'undefined' && Object.values(DossierStore.serialize()?.dims || {}).some(rows => Array.isArray(rows) && rows.some(row => row.text && row.weight !== 'seed'))
+        },
+        checkpoint: progress => {
+          if (!agent || agent.onboarded) return;
+          agent.onboardingProgress = progress;
+          persist();
+          if (typeof CloudSave !== 'undefined') CloudSave.flush({ force: true });
+        },
         commit: applyAgentConfig,                            // each answer folds a real doc into the live prompt + persists
         getSystem: () => agent ? agent.systemPrompt : '',    // Interview 2.0: the generated beats (wakemind.js) reason on the LIVE prompt (persona + dossier already folded in)
-        done: () => { if (agent) agent.onboarded = true; persist(); if (typeof KeyCTA !== 'undefined' && KeyCTA.arm) KeyCTA.arm(); },   // the awakening landed — mark onboarded so a later refresh resumes into the game, not back into the ceremony; arm the keyless-brain CTA (shows only if no key is truly stored)
+        done: () => { if (agent) { agent.onboarded = true; delete agent.onboardingProgress; } persist(); if (typeof KeyCTA !== 'undefined' && KeyCTA.arm) KeyCTA.arm(); },   // the awakening landed — mark onboarded so a later refresh resumes into the game, not back into the ceremony; arm the keyless-brain CTA (shows only if no key is truly stored)
         notify: (typeof StationUI !== 'undefined') ? StationUI.notify : null,
         // FIRST COMMAND — once the awakening lands, the agent itself teaches the Commander the one real loop (tutorial.js)
         taught: () => { if (typeof Tutorial !== 'undefined' && Tutorial.firstCommand) Tutorial.firstCommand({ name: agent.name }); }
@@ -5006,7 +5019,7 @@ const App = (() => {
   async function init() {
     if (Harness.init) await Harness.init();   // desktop: load the keychain "configured?" flag first
     if (typeof StationUI !== 'undefined') StationUI.init();   // applies saved theme/CRT settings, wires the bottom bar
-    if (typeof Updates !== 'undefined' && typeof StationUI !== 'undefined') Updates.init({ notify: StationUI.notify, rerender: StationUI.rerender });
+    if (!window.__STARNET_REMOTE__ && typeof Updates !== 'undefined' && typeof StationUI !== 'undefined') Updates.init({ notify: StationUI.notify, rerender: StationUI.rerender });
 
     /* EXTENSIONS AWAITING APPROVAL. Hooks and plugins are opt-in by design: an unapproved one is silently
        inert. That is the correct security posture and the worst possible UX if it is never surfaced — the
@@ -5163,5 +5176,12 @@ const App = (() => {
     openRecipeLaunch: openRecipeLaunch,   // routine-nudge beat (lane D): accepting deep-links into the recipe's SCHEDULE IT form
     applyConfig: applyAgentConfig,
     setApproval: setAgentApproval,
-    setExecutionProfile: setAgentExecutionProfile };
+    setExecutionProfile: setAgentExecutionProfile,
+    refreshRemoteSessions: saved => {
+      if (!agent || !saved || !Array.isArray(saved.workstreams)) return;
+      const activeId = Workstreams.activeId();
+      const current = Workstreams.init({ ...saved, activeId });
+      if (current && typeof Chat !== 'undefined' && Chat.refreshRemoteHistory) Chat.refreshRemoteHistory(current);
+      renderRail();
+    } };
 })();

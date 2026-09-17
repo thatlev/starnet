@@ -657,18 +657,23 @@ const Harness = (() => {
 
   // Replace a credential as one user-visible operation: prove the candidate first, then commit it. Validation
   // never mutates provider state, so a rejection/timeout leaves the previous working key untouched.
-  async function validateAndSetKey(key, provider) {
+  async function validateAndSetKey(key, provider, baseUrlOverride) {
     const p = normalizeProviderId(provider || getProv());
     const candidate = String(key || '').trim();
     if (!candidate) return setKey('', p);
+    // Custom OpenAI-compatible providers cannot be validated against the empty registry default. The Settings
+    // card supplies a first-time endpoint here; do not persist it until the candidate key has passed validation,
+    // so a bad z.ai/custom key still leaves the previous key and endpoint untouched.
+    const baseUrl = baseUrlOverride == null ? (getBaseUrl(p) || '') : String(baseUrlOverride || '').trim();
     const r = await fetch('/api/providers/validate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: p, key: candidate, baseUrl: getBaseUrl(p) || '', model: p === getProv() ? getModel() : '' })
+      body: JSON.stringify({ provider: p, key: candidate, baseUrl, model: p === getProv() ? getModel() : '' })
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || !j.credentialVerified) {
       throw new Error(String(j.error || 'the provider did not verify this key') + ' — your previous key is unchanged');
     }
+    if (baseUrlOverride != null) await Promise.resolve(setBaseUrl(baseUrl, p));
     await Promise.resolve(setKey(candidate, p));
     return Object.assign({}, j, { stored: true });
   }
