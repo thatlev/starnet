@@ -33,8 +33,15 @@ final class StarNetLoadingView: NSView {
         activity.setAccessibilityElement(false)
         activity.wantsLayer = true
         retry.bezelStyle = .smallSquare
+        retry.isBordered = false
         retry.font = NSFont(name: "VT323", size: 20) ?? .monospacedSystemFont(ofSize: 12, weight: .medium)
         retry.contentTintColor = Self.amber
+        retry.wantsLayer = true
+        retry.layer?.backgroundColor = Self.background.withAlphaComponent(0.72).cgColor
+        retry.layer?.cornerRadius = 4
+        retry.layer?.borderWidth = 1
+        retry.layer?.borderColor = Self.amber.withAlphaComponent(0.80).cgColor
+        retry.setAccessibilityLabel("Try connecting to StarNet again")
         retry.isHidden = true
         let stack = NSStackView(views: [logo, status, activity, detail, retry])
         stack.orientation = .vertical; stack.alignment = .centerX; stack.spacing = 20

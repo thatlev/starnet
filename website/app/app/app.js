@@ -779,6 +779,18 @@ const App = (() => {
   function providerNeedsBaseUrl(provider) {
     return normalizeProviderId(provider) === 'custom';
   }
+  function savedProviderId(saved) {
+    const agentProvider = saved && saved.agent && saved.agent.provider;
+    const topLevelProvider = saved && saved.prov;
+    return normalizeProviderId(agentProvider || topLevelProvider || 'openrouter');
+  }
+  function restoreSavedProvider(saved) {
+    const provider = savedProviderId(saved);
+    if (saved && saved.agent) saved.agent.provider = provider;
+    if (saved) saved.prov = provider;
+    if (typeof Harness !== 'undefined' && Harness.setProv) Harness.setProv(provider);
+    return provider;
+  }
   function providerKeyPlaceholder(provider, configured) {
     const p = normalizeProviderId(provider);
     if (configured) return provider === 'levserver' ? 'stored on your gateway - leave blank to keep' : 'stored locally - leave blank to keep';
@@ -2629,9 +2641,9 @@ const App = (() => {
     if (Save.isFuture && Save.isFuture()) { showFutureSaveGate(Save.loadStatus().version); return; }
     const saved = Save.has() ? Save.load() : null;
     if (saved && saved.agent) {
-      if (saved.prov && Harness.setProv) Harness.setProv(saved.prov);
+      const provider = restoreSavedProvider(saved);
       if (saved.reasoningEffort && Harness.setReasoningEffort) Harness.setReasoningEffort(saved.reasoningEffort);
-      if (Harness.getKey() || (Harness.configured && Harness.configured()) || Harness.getProv() === 'codex') {
+      if (Harness.getKey(provider) || (Harness.configured && Harness.configured(provider)) || provider === 'codex') {
         resumingSaved = null; resumeInto(saved); return;
       }
       resumingSaved = saved;
@@ -2798,7 +2810,14 @@ const App = (() => {
     msg.textContent = '';
 
     wakeBtnBusy(true);   // COMMIT POINT: past every validation gate — show WAKING… and hold the latch through enterGame
-    if (resumingSaved) { const s = resumingSaved; resumingSaved = null; s.agent.model = model; resumeInto(s); return true; }
+    if (resumingSaved) {
+      const s = resumingSaved; resumingSaved = null;
+      const provider = normalizeProviderId(pickedProvider || (Harness.getProv && Harness.getProv()) || savedProviderId(s));
+      s.prov = provider;
+      s.agent.provider = provider;
+      s.agent.model = model;
+      resumeInto(s); return true;
+    }
 
     // LOCK DOWN before the NEW hero or any of its local stores are committed. A failed durable revoke rejects,
     // leaves the prior station intact, and keeps its confirmed grant visible instead of commissioning a fresh
@@ -2871,6 +2890,7 @@ const App = (() => {
 
   /* ---------- resume ---------- */
   function resumeInto(saved) {
+    const provider = restoreSavedProvider(saved);
     agent = saved.agent;
     // A legacy hero without createdAt already belongs to growth epoch 1 on the sidecar.
     // Resuming is not founding a new station: inventing a timestamp here rejects every crew rating
@@ -2884,9 +2904,8 @@ const App = (() => {
     registerHero(agent);                           // found the registry with the hero…
     rehydrateRoster(saved.agents);                 // …then restore any summoned crew (older saves: no-op)
     recomposeOrchestrators();                      // …and only NOW does the hero's YOUR CREW clause see them (composing above sees an empty registry)
-    if (saved.prov && Harness.setProv) Harness.setProv(saved.prov);   // keep the provider with the agent (codex vs openrouter)
     if (saved.reasoningEffort && Harness.setReasoningEffort) Harness.setReasoningEffort(saved.reasoningEffort);
-    if (!agent.provider && saved.prov) agent.provider = saved.prov;   // #4: older hero saves stored provider only at the top level — stamp it onto the hero object so focusAgent restores it
+    agent.provider = provider;                 // provider is part of the hero identity, not a stale global setting
     if (!agent.reasoningEffort && saved.reasoningEffort) agent.reasoningEffort = saved.reasoningEffort;
     Harness.setModel(agent.model || Harness.getModel());
     Harness.setTotals(saved.usage || { tokens: 0, cost: 0, calls: 0 });
@@ -5117,7 +5136,7 @@ const App = (() => {
     }
     // restore the provider BEFORE the credential check so a codex agent (tokens server-side) jumps straight
     // in after a wipe/origin-reset instead of being misrouted to an OpenRouter key prompt.
-    if (saved && saved.prov && Harness.setProv) Harness.setProv(saved.prov);
+    const savedProvider = saved && saved.agent ? restoreSavedProvider(saved) : null;
     if (saved && saved.reasoningEffort && Harness.setReasoningEffort) Harness.setReasoningEffort(saved.reasoningEffort);
     if (saved && saved.agent) {
       // AUTO-RESUME: a saved station goes STRAIGHT back into the world when creds are available — an OpenRouter
@@ -5127,7 +5146,7 @@ const App = (() => {
       // and if that is slow/blocked, awaiting it here strands boot on the connect screen forever (the seeded DEV
       // shoot regression). The catalog is cosmetic for resume (dropdown/pricing/context gauge), so fire it in the
       // BACKGROUND and enter the station immediately — pricing fills in a beat later, the floor never waits.
-      const canResume = !!(Harness.getKey() || (Harness.configured && Harness.configured()) || Harness.getProv() === 'codex');
+      const canResume = !!(Harness.getKey(savedProvider) || (Harness.configured && Harness.configured(savedProvider)) || savedProvider === 'codex');
       if (canResume) {
         if (Harness.getProv && Harness.getProv() !== 'codex' && Harness.listModels) { Promise.resolve(Harness.listModels()).catch(() => {}); }
         resumeInto(saved); return;

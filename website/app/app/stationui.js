@@ -1126,14 +1126,66 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
           if (r.checked != null) el.checked = r.checked;
           else if (r.value != null && el.value !== r.value) el.value = r.value;
           if (r.dirty != null && el.dataset) el.dataset.dirty = r.dirty;
-          if (r.focused) { el.focus(); if (r.selS != null && typeof el.setSelectionRange === 'function') el.setSelectionRange(r.selS, r.selE == null ? r.selS : r.selE); }
+          if (r.focused) {
+            try { el.focus({ preventScroll: true }); }
+            catch (_) { try { el.focus(); } catch (_) {} }
+            if (r.selS != null && typeof el.setSelectionRange === 'function') el.setSelectionRange(r.selS, r.selE == null ? r.selS : r.selE);
+          }
         } catch (_) { /* a rebuilt control that refuses restore is no worse than the old wipe */ }
       }
     };
+    let scrollRevision = 0;
+    let scrollRestoreToken = 0;
+    let restoringScroll = false;
+    body.addEventListener('scroll', () => {
+      if (!restoringScroll) scrollRevision += 1;
+    }, true);
+    const captureScroll = () => {
+      const rows = [];
+      for (const el of [body, ...body.querySelectorAll('*')]) {
+        if (el.scrollHeight <= el.clientHeight && el.scrollWidth <= el.clientWidth) continue;
+        rows.push({ root: el === body, path: el === body ? null : ctrlPath(el), top: el.scrollTop, left: el.scrollLeft });
+      }
+      return rows;
+    };
+    const restoreScroll = (rows) => {
+      restoringScroll = true;
+      try {
+        for (const r of rows) {
+          let el = r.root ? body : null;
+          if (!el) { try { el = ctrlFind(r.path); } catch (_) { el = null; } }
+          if (!el) continue;
+          el.scrollTop = r.top;
+          el.scrollLeft = r.left;
+        }
+      } finally {
+        restoringScroll = false;
+      }
+    };
+    const scheduleScrollRestore = (rows, revision) => {
+      const token = ++scrollRestoreToken;
+      if (!rows || !rows.length) return;
+      restoreScroll(rows);
+      requestAnimationFrame(() => {
+        if (token !== scrollRestoreToken || scrollRevision !== revision) return;
+        restoreScroll(rows);
+        requestAnimationFrame(() => {
+          if (token !== scrollRestoreToken || scrollRevision !== revision) return;
+          restoreScroll(rows);
+          setTimeout(() => {
+            if (token !== scrollRestoreToken || scrollRevision !== revision) return;
+            restoreScroll(rows);
+          }, 80);
+        });
+      });
+    };
     w._render = (swap) => {
       const keep = swap === false ? captureForms() : null;   // background poke: preserve what the Commander typed
+      const keepScroll = swap === false ? captureScroll() : null;
+      const scrollMark = scrollRevision;
       builder(body);
       if (keep && keep.length) restoreForms(keep);
+      if (keepScroll && keepScroll.length) scheduleScrollRestore(keepScroll, scrollMark);
       // tab/section crossfade: fade the freshly-injected body in on RE-renders (tab swaps,
       // live refreshes) — not on the initial mount, which already plays the CRT power-on.
       if (swap) {
@@ -9167,6 +9219,47 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     wireVerdict(nsNo, 'decline', 'warn');
   }
 
+  let globalScrollRestoreToken = 0;
+  let globalScrollRevision = 0;
+  let globalRestoringScroll = false;
+  document.addEventListener('scroll', () => {
+    if (!globalRestoringScroll) globalScrollRevision += 1;
+  }, true);
+  function captureGlobalScroll() {
+    const rows = [];
+    for (const el of document.querySelectorAll('.term-body, .con-pane')) {
+      if (el.scrollHeight <= el.clientHeight && el.scrollWidth <= el.clientWidth) continue;
+      rows.push({ el, top: el.scrollTop, left: el.scrollLeft });
+    }
+    return rows;
+  }
+  function preserveScroll(update) {
+    const rows = captureGlobalScroll();
+    const revision = globalScrollRevision;
+    const token = ++globalScrollRestoreToken;
+    update();
+    const restore = () => {
+      if (token !== globalScrollRestoreToken || globalScrollRevision !== revision) return;
+      globalRestoringScroll = true;
+      try {
+        for (const row of rows) {
+          row.el.scrollTop = row.top;
+          row.el.scrollLeft = row.left;
+        }
+      } finally {
+        globalRestoringScroll = false;
+      }
+    };
+    restore();
+    requestAnimationFrame(() => {
+      restore();
+      requestAnimationFrame(() => {
+        restore();
+        setTimeout(restore, 80);
+      });
+    });
+  }
+
   /* ============== lifecycle ============== */
   const BUILDERS = {
     agents:   ['AGENT DOSSIER',          buildAgents,    { console: true, className: 'dossier' }],
@@ -9220,7 +9313,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     // shared window fragments (roster switcher for the per-agent windows; dossier memory loader)
     rosterSwitchHtml, wireRosterSwitch, loadMemoryCore, workshopCard, wireWorkshop,
     // workstream + persistence seams
-    WS, persistWS, save, consoleSection,
+    WS, persistWS, save, consoleSection, preserveScroll,
     // live core state (read-only views — never reassign through these)
     get present() { return present; },
     get sel() { return sel; },

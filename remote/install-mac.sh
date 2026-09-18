@@ -8,7 +8,6 @@ gh api user --jq '{login,id}'
 owner_id=$(gh api user --jq .id)
 node "$source_root/remote/cli.js" configure --host lev-server-direct --owner "$owner_id" --gateway-port 18791
 app_target=${1:-/Applications/StarNet Remote.app}
-[[ ! -e "$app_target" ]] || { echo 'App already exists; preserve it before installing a replacement.' >&2; exit 1; }
 mkdir -p "$source_root/work/mac-build"
 build_root=$(mktemp -d "$source_root/work/mac-build/build.XXXXXX")
 app_build="$build_root/StarNet Remote.app"
@@ -38,5 +37,14 @@ cat > "$app_build/Contents/Info.plist" <<'PLIST'
 PLIST
 codesign --force --sign - "$app_build"
 codesign --verify --strict "$app_build"
+if [[ -e "$app_target" ]]; then
+  osascript -e 'tell application "StarNet Remote" to quit' >/dev/null 2>&1 || true
+  sleep 1
+  backup_root="$source_root/work/mac-build/replaced-apps"
+  mkdir -p "$backup_root"
+  backup_target="$backup_root/StarNet Remote $(date +%Y%m%d-%H%M%S).app"
+  ditto "$app_target" "$backup_target"
+  rm -rf "$app_target"
+fi
 ditto "$app_build" "$app_target"
 echo "Installed $app_target (local build, ad-hoc signed). No agent tasks created."
