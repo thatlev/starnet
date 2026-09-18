@@ -69,10 +69,25 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
 
     func startProxy() {
         guard let resources = Bundle.main.resourcePath else { return }
+        let home = NSHomeDirectory()
+        let candidates = [
+            ProcessInfo.processInfo.environment["STARNET_NODE_PATH"],
+            "/opt/homebrew/bin/node",
+            "/usr/local/bin/node",
+            home + "/.local/bin/node",
+            home + "/.hermes/node/bin/node",
+            "/usr/bin/node"
+        ].compactMap { $0 }.filter { FileManager.default.isExecutableFile(atPath: $0) }
+        guard let node = candidates.first else {
+            loadingView.fail("The connection client could not find Node.js. Reinstall Node.js, then reopen StarNet.")
+            return
+        }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["node", resources + "/remote/cli.js", "connect"]
-        process.environment = ProcessInfo.processInfo.environment.merging(["PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"]) { _, new in new }
+        process.executableURL = URL(fileURLWithPath: node)
+        process.arguments = [resources + "/remote/cli.js", "connect"]
+        let nodeDirectory = URL(fileURLWithPath: node).deletingLastPathComponent().path
+        let inheritedPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        process.environment = ProcessInfo.processInfo.environment.merging(["PATH": nodeDirectory + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + inheritedPath]) { _, new in new }
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         do { try process.run(); proxy = process }
