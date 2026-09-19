@@ -3259,10 +3259,7 @@ mod artifact_open_tests {
         std::env::temp_dir().join(format!(
             "starnet-artifact-open-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or(0)
+            uuid::Uuid::new_v4()
         ))
     }
 
