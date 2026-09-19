@@ -64,6 +64,7 @@
     if (!current?.localAvailable) return;
     if (current.busy) await action('cancel');
     $('status').textContent = 'Opening your local station…';
+    lastMessage = null;
     window.location.href = 'starnet-connect://local';
   };
   $('remote-choice').onclick = () => $('host').focus();
