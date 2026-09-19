@@ -186,6 +186,13 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       return false;
     }
   }
+  // A periodic whole-screen dim reads as a lost remote connection. Adopt the calm
+  // remote default once; the existing Appearance toggle remains an explicit opt-in.
+  if (window.__STARNET_REMOTE__ && store.settings.remoteDisplayVersion !== 1) {
+    store.settings.flicker = false;
+    store.settings.remoteDisplayVersion = 1;
+    save();
+  }
   const uid = p => p + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
 
   // brief "✓ saved" flash for an instant-save section (theme/appearance/notifications) so every section answers
@@ -1166,8 +1173,14 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     w._render = (swap) => {
       const keep = swap === false ? captureForms() : null;   // background poke: preserve what the Commander typed
       const keepScroll = swap === false ? captureScroll() : null;
+      // Account content is asynchronous. Replacing a tall result with its short loading
+      // placeholder clamps scrollTop before it can be restored, even within one frame.
+      const creditHeight = swap === false ? body.querySelector('#credits-store')?.offsetHeight : 0;
       const disclosures = swap === false ? Array.from(body.querySelectorAll('details, .key-edit[id]'), el => ({ path: ctrlPath(el), hidden: el.hidden, open: el.open })) : [];
+      body.classList.toggle('term-live-refresh', swap === false);
       builder(body);
+      const creditHost = body.querySelector('#credits-store');
+      if (creditHost && creditHeight) creditHost.style.minHeight = creditHeight + 'px';
       for (const row of disclosures) { const el = ctrlFind(row.path); if (el) { el.hidden = row.hidden; if (row.open != null) el.open = row.open; } }
       if (keep && keep.length) restoreForms(keep);
       restoreScroll(keepScroll);
@@ -5128,6 +5141,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   function wireCredits(body) {
     const host = body.querySelector('#credits-store');
     if (!host) return;
+    retainCreditsHeight(host);
     const generation = ++_creditsStoreGeneration;
     const current = () => generation === _creditsStoreGeneration && host.isConnected !== false;
     stopLinkPoll();        // any in-flight link poll from a prior render is stale now
@@ -5137,6 +5151,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       return Promise.resolve();
     }
     host.innerHTML = '<p class="set-about" role="status">Checking your account connection…</p>';
+    retainCreditsHeight(host);
     // /api/credits 404s when credits are unconfigured — that is the honesty law, not an error, and
     // api.get throws on any non-2xx. Catching to {configured:false} keeps the 404 on the normal path.
     return Harness.api.get('/api/credits').catch(error => {
@@ -5156,11 +5171,17 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
               lk.reason === 'link_revoked'
                 ? 'This station’s previous link was removed from your account. Link it again to reconnect your balance.'
                 : '');
-            else if (lk && lk.available === false && lk.cloud === false && !_creditsUnlinkError) host.innerHTML = '';
+            else if (lk && lk.available === false && lk.cloud === false && !_creditsUnlinkError) { retainCreditsHeight(host); host.innerHTML = ''; }
             else renderCreditsUnavailable(body, host);
           });
       })
       .catch(() => { if (current()) renderCreditsUnavailable(body, host); });
+  }
+
+  // Keep the current reading position when a status reply is shorter than its
+  // placeholder or previous result. The reservation lasts only until Settings closes.
+  function retainCreditsHeight(host) {
+    host.style.minHeight = Math.max(host.offsetHeight, parseFloat(host.style.minHeight) || 0) + 'px';
   }
 
   function creditsUnlinkErrorMarkup() {
@@ -5169,6 +5190,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   }
 
   function renderCreditsUnavailable(body, host) {
+    retainCreditsHeight(host);
     host.innerHTML = '<h4 class="ms-h">STORE <span class="dim">— managed credits</span></h4>' +
       creditsUnlinkErrorMarkup() +
       '<p class="set-about" role="alert">Could not check your account connection. Retry to load your balance or linking options.</p>' +
@@ -5214,6 +5236,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   // The configured STORE: real balance + history + ADD CREDITS. When the station is configured via a LINKED
   // DEVICE (not operator env), also surface a small UNLINK affordance + the account id.
   function renderCreditsConfigured(body, host, j) {
+    retainCreditsHeight(host);
     const bal = (j.balanceUsd == null) ? '—' : fmtUsd(j.balanceUsd);
     const reach = j.reachable === false;
     const hist = Array.isArray(j.history) ? j.history : [];
@@ -5331,6 +5354,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
 
   // The UNLINKED-but-linkable state: a LINK STATION card. Clicking begins the pairing dance.
   function renderCreditsLinkCard(body, host, note) {
+    retainCreditsHeight(host);
     host.innerHTML =
       '<h4 class="ms-h">STORE <span class="dim">— managed credits</span></h4>' +
       creditsUnlinkErrorMarkup() +

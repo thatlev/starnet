@@ -3,19 +3,18 @@ set -euo pipefail
 source_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 [[ $(uname -s) == Darwin ]] || { echo 'This installer is for macOS' >&2; exit 1; }
 command -v node >/dev/null
-command -v gh >/dev/null
-gh api user --jq '{login,id}'
-owner_id=$(gh api user --jq .id)
-if [[ ! -f "$HOME/.config/starnet-remote/config.json" ]]; then
-  node "$source_root/remote/cli.js" configure --host lev-server-direct --owner "$owner_id" --gateway-port 18791
-fi
+node "$source_root/remote/package.mjs"
+package_root="$source_root/work/remote-package/desktop"
 app_target=${1:-/Applications/StarNet Remote.app}
 mkdir -p "$source_root/work/mac-build"
 build_root=$(mktemp -d "$source_root/work/mac-build/build.XXXXXX")
 app_build="$build_root/StarNet Remote.app"
 mkdir -p "$app_build/Contents/MacOS" "$app_build/Contents/Resources/sidecar" "$app_build/Contents/Resources/remote"
 swiftc -target "$(uname -m)-apple-macos13.0" -O -framework Cocoa -framework WebKit "$source_root/remote/LoadingView.swift" "$source_root/remote/StationMac.swift" -o "$app_build/Contents/MacOS/StarNetRemote"
-cp "$source_root/remote/cli.js" "$source_root/remote/gateway.js" "$source_root/remote/startup-observer.js" "$app_build/Contents/Resources/remote/"
+cp "$source_root/remote/"*.js "$source_root/remote/setup.html" "$source_root/remote/setup.css" "$app_build/Contents/Resources/remote/"
+cp -R "$source_root/remote/assets" "$app_build/Contents/Resources/remote/assets"
+cp -R "$package_root/bin" "$package_root/licenses" "$app_build/Contents/Resources/"
+cp "$package_root/starnet-server.tar.gz" "$package_root/BUILD.json" "$app_build/Contents/Resources/"
 cp "$source_root/sidecar/apiauth.js" "$app_build/Contents/Resources/sidecar/"
 cp "$source_root/frontend/assets/brand/starnet-logo.png" "$app_build/Contents/Resources/LoadingLogo.png"
 cp "$source_root/NOTICE.md" "$app_build/Contents/Resources/NOTICE.md"
@@ -30,14 +29,16 @@ cat > "$app_build/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>StarNet Remote</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
-<key>CFBundleVersion</key><string>4</string>
-<key>CFBundleShortVersionString</key><string>0.1.3</string>
+<key>CFBundleVersion</key><string>5</string>
+<key>CFBundleShortVersionString</key><string>0.2.0</string>
 <key>CFBundleIconFile</key><string>Station</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
 PLIST
 git -C "$source_root" rev-parse HEAD > "$app_build/Contents/Resources/SOURCE_REVISION"
+codesign --force --sign - "$app_build/Contents/Resources/bin/node"
+codesign --force --sign - "$app_build/Contents/Resources/bin/gh"
 codesign --force --sign - "$app_build"
 codesign --verify --strict "$app_build"
 if [[ -e "$app_target" ]]; then

@@ -7,6 +7,7 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { spawn, execFileSync } = require('node:child_process');
 const { createGateway, createClient } = require('./gateway');
+const { readConfig, saveConfig, connectionConfig, sshArgs } = require('./config');
 const ROOT = path.resolve(__dirname, '..');
 
 function args(argv) {
@@ -23,8 +24,6 @@ function port(value, fallback) {
   return n;
 }
 function privateDirectory(dir) { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); fs.chmodSync(dir, 0o700); }
-function configPath() { return path.join(os.homedir(), '.config', 'starnet-remote', 'config.json'); }
-function readConfig() { return JSON.parse(fs.readFileSync(configPath(), 'utf8')); }
 function waitPort(number, child, ms = 30000) {
   return new Promise((resolve, reject) => {
     const end = Date.now() + ms;
@@ -81,17 +80,15 @@ async function serve(o) {
   console.log('StarNet headless gateway ready on 127.0.0.1:' + gatewayPort + '; owner GitHub ID ' + ownerId);
 }
 async function connect(o) {
-  const cfg = { ...readConfig(), ...o };
+  const cfg = connectionConfig({ ...readConfig(), ...o });
   const localPort = port(cfg.port, 8790), remotePort = port(cfg['gateway-port'], 18791);
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/.test(cfg.host || '')) throw new Error('Invalid SSH host alias');
   await assertFree(localPort);
   const tunnelPort = await freePort();
   let ssh, ready = false, stopping = false, reconnectTimer, delay = 1000, session = null, login = null;
   function startTunnel() {
     ready = false;
-    ssh = spawn('ssh', ['-N', '-T', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes',
-      '-o', 'StrictHostKeyChecking=yes', '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'ControlPersist=no', '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=2',
-      '-o', 'ConnectTimeout=12', '-L', '127.0.0.1:' + tunnelPort + ':127.0.0.1:' + remotePort, cfg.host],
+    ssh = spawn('ssh', ['-N', '-T', ...sshArgs(cfg), '-o', 'ExitOnForwardFailure=yes',
+      '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=2', '-L', '127.0.0.1:' + tunnelPort + ':127.0.0.1:' + remotePort, cfg.host],
     { stdio: ['ignore', 'ignore', 'pipe'] });
     // SSH errors may contain host paths; never print any authentication payload.
     ssh.stderr.on('data', () => {});
@@ -137,10 +134,7 @@ async function main() {
   if (o.command === 'serve') return serve(o);
   if (o.command === 'connect') return connect(o);
   if (o.command === 'configure') {
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$/.test(o.host || '') || !Number.isSafeInteger(Number(o.owner)) || Number(o.owner) <= 0) throw new Error('configure --host SSH_ALIAS --owner NUMERIC_GITHUB_ID');
-    const target = configPath(); privateDirectory(path.dirname(target));
-    fs.writeFileSync(target, JSON.stringify({ host: o.host, owner: Number(o.owner), port: port(o.port, 8790), 'gateway-port': port(o['gateway-port'], 18791) }) + '\n', { mode: 0o600 });
-    fs.chmodSync(target, 0o600);
+    saveConfig(o);
     console.log('Connection settings saved. GitHub credentials stay in gh authentication storage.'); return;
   }
   if (o.command === 'status') {
@@ -153,7 +147,7 @@ async function main() {
     if (!r.ok) throw new Error('Station is disconnected (' + r.status + ')');
     console.log(JSON.stringify(await r.json(), null, 2)); return;
   }
-  console.log('StarNet Remote\n\n  serve --owner GITHUB_ID [--data PATH] [--port 18791] [--runtime-port 18792]\n  configure --host lev-server-direct --owner GITHUB_ID [--port 8790] [--gateway-port 18791]\n  connect\n  status\n\nLinux: Node 22+ and the locked remote/package.json dependencies. No display, browser, voice runtime or GPU required.\nMac: gh auth login --hostname github.com --web, then configure and connect.\nAuthentication uses the GitHub CLI OAuth application and verifies the numeric owner ID.');
+  console.log('StarNet Remote\n\n  serve --owner GITHUB_ID [--data PATH] [--port 18791] [--runtime-port 18792]\n  configure --host user@server --owner GITHUB_ID [--port 8790] [--gateway-port 18791]\n  connect\n  status\n\nLinux: Node 22+ and the locked remote/package.json dependencies. No display, browser, voice runtime or GPU required.\nMac: gh auth login --hostname github.com --web, then configure and connect.\nAuthentication uses the GitHub CLI OAuth application and verifies the numeric owner ID.');
 }
 if (require.main === module) main().catch(e => { console.error('StarNet: ' + e.message); process.exit(1); });
-module.exports = { args, port, waitPort, freePort };
+module.exports = { args, port, waitPort, freePort, assertFree };

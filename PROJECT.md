@@ -3,7 +3,35 @@
 Private fork of androoAGI/starnet, updated through v0.12.3 (`3ba5b84922f3b62caa4e159999ef3acc82af2a3e`) on its default `feat/harness-backend` branch.
 Upstream history, MIT license and notices are retained.
 
-## Active release: durable providers and stable remote settings
+## Active release: remote display and connection setup
+
+- [x] Reproduce delayed scroll movement and distinguish data refresh from decorative screen flicker.
+- [x] Preserve provider geometry and editors during asynchronous updates; restore the classic remote conversation presentation without reverting upstream interview logic.
+- [x] Verify delayed updates in the browser; the 15-second reply retains the exact scroll position.
+- [ ] Package, install and push the reviewed display/connection candidate.
+
+| Before | After | Evidence |
+| --- | --- | --- |
+| A 243px account result became a 24px loading placeholder during rebuild, clamping the scroll position before the delayed result returned. | Reserve the account surface's current height until Settings closes. | Browser reproduced a 221px shift; the fixed 18-second test with a 15-second response had zero scroll movement. |
+| Rebuilt provider cards replayed their entrance animation; upstream also dimmed the entire game every seven seconds. | Background renders suppress card entrance motion. Remote viewers adopt a one-time calm default while retaining the explicit Screen Flicker toggle. | Browser reported no card or full-screen flicker animations after the refresh. |
+| Upstream's new conversation layout put a large answer box above expandable suggestions. | Remote-only classic dark presentation, compact options and an explicit custom-answer editor. | The upstream interview logic remains; suggestions still require the user's own answer. |
+
+## Remote connection onboarding in this candidate
+
+- [x] Research official Hermes first-launch, existing-server and new-server paths.
+- [x] Add an accessible connection/setup flow with durable settings, clear failure recovery and explicit execution location.
+- [x] Provide a reproducible server installation and desktop packaging path suitable for upstream review, without depending on Lev's host/account.
+- [ ] Verify setup, cancellation, authentication and reconnect behavior; rebuild and provide acceptance steps. Official upstream PR still waits for acceptance.
+
+The setup helper is isolated from remote station HTML by a separate loopback origin and CSRF token. Connection checks authenticate ownership and exercise the runtime/SSE without inference; failures and cancellation preserve the prior configuration. Distinct server/account connections keep separate browser origins. The Mac package includes verified Node/GitHub CLI binaries and a reviewed Linux installer payload; no personal host or account is seeded. See [setup and distribution](docs/remote/SETUP.md).
+
+| Before | After | Why |
+| --- | --- | --- |
+| A fresh viewer needed external tools and a manually written connection file. | Native first-launch setup, bundled helpers, GitHub sign-in and a tested SSH form. | Makes installation usable on a clean Mac. |
+| One local origin was reused for every host. | Stable origins per server/account, retaining the existing origin during migration. | Keeps drafts and cached station settings separate. |
+| A missing remote runtime had no desktop setup path. | An explicit new-server installer with visible scope and progress in Terminal. | Installs the reviewed server without replacing an active station. |
+
+## Release: durable providers and stable remote settings
 
 - [x] Compare with the current upstream default branch and merge its updates.
 - [x] Persist remote provider credentials and custom endpoints on the server; resume saved stations without an inference or balance gate.

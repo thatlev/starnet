@@ -1,0 +1,17 @@
+/* Classic conversation presentation for the remote viewer. Interview behavior
+   and the standard desktop's newer presentation remain owned by upstream. */
+.remote-station .fnv-dialogue {
+  background: radial-gradient(ellipse 130% 90% at 50% 0%, var(--ph-glow2), transparent 55%),
+    linear-gradient(180deg, rgba(0,0,0,.94), rgba(0,0,0,.97));
+  background-color: #000;
+  border-left: 2px solid var(--ph-dim);
+  padding: 18px 18px 16px; gap: 12px;
+}
+.remote-station .fnv-dialogue::before { display: none; }
+.remote-station .fnv-speaker { font-size: 13px; letter-spacing: 3px; padding-bottom: 8px; text-shadow: 0 0 8px var(--ph-glow2); }
+.remote-station .fnv-line { flex: 1 1 auto; min-height: 2.4em; overflow-y: auto; align-items: center; font-size: 18px; text-shadow: 0 0 6px var(--ph-glow2); }
+.remote-station .fnv-opts { gap: 7px; }
+.remote-station .fnv-opt { padding: 9px 13px; font-size: 16px; border-radius: 5px; text-shadow: 0 0 5px var(--ph-glow2); }
+.remote-station .fnv-custom-in { min-height: 72px; }
+.remote-station .fnv-tour .fnv-line { min-height: 0; align-items: start; }
+@media (max-height:650px) { .remote-station .fnv-dialogue { padding: 14px; gap: 9px; } }

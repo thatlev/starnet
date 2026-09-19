@@ -12,7 +12,7 @@ Remote API keys, custom base URLs and backup keys persist on the server. Existin
 
 A saved remote station opens even when the provider has exhausted quota, is unavailable, or has no working credential. Settings remain accessible to repair it. Boot and migration do not validate keys against a provider. Saving a newly entered key retains the existing validation flow and preserves the old key if validation fails. Custom model IDs remain selected when an endpoint's model catalog omits them.
 
-The compact Gateway control stays neutral while connected. Reconnection, an expired session or pending decisions adds a visible text label. The panel keeps approval controls stable during polling, disables them while disconnected and distinguishes last-known activity from a live snapshot. Expired sessions require an explicit reload; copy unsent text first. The Mac application menu exposes the same panel with Command-comma, including from the start screen.
+The compact Gateway control stays neutral while connected. Reconnection, an expired session or pending decisions adds a visible text label. The panel keeps approval controls stable during polling, disables them while disconnected and distinguishes last-known activity from a live snapshot. Expired sessions require an explicit reload; copy unsent text first. The Mac application menu exposes the same panel with Command-comma. Connection Setup (Command-K) handles sign-in and SSH settings; see [setup](SETUP.md).
 
 Every remote run and goal command requires a unique request ID, claimed durably before execution. Retrying an accepted ID returns a refusal and never starts another run. Closing a response stream detaches its viewer; explicit cancellation still aborts its server run. Bounded backpressure disconnects a stalled viewer without accumulating unlimited output.
 
@@ -41,7 +41,8 @@ The LevServer model key allows the gateway's subscription models and preserves a
 | Remote provider settings | `/srv/private/starnet/workspaces/.secrets/remote-providers.json` (starnet-only) |
 | systemd service | `starnet-remote.service` |
 | Linux gateway / runtime | `127.0.0.1:18791` / `127.0.0.1:18792` |
-| Mac viewer | `http://127.0.0.1:8790` |
+| Mac viewer | Existing connection: `http://127.0.0.1:8790`; new stations use separate saved loopback ports |
+| Connection setup | `http://127.0.0.1:18790` |
 
 Use `ssh lev-server-direct starnet status` for service status. Use `journalctl -u starnet-remote` on the server for diagnostics. Do not print credential files or `gh auth token` into logs. Remote provider changes belong in Settings > Providers; the dedicated LevServer gateway subscription remains managed through Control.
 

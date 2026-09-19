@@ -4,7 +4,18 @@ set -euo pipefail
 [[ $(id -u) == 0 ]] || { echo 'Run with sudo' >&2; exit 1; }
 [[ ${1:-} =~ ^[1-9][0-9]+$ ]] || { echo 'Usage: sudo remote/install-linux.sh GITHUB_OWNER_ID' >&2; exit 1; }
 source_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-node_path=$(command -v node)
+case $(uname -m) in
+  x86_64) runtime_name=node-linux-x64 ;;
+  aarch64|arm64) runtime_name=node-linux-arm64 ;;
+  *) echo 'Supported server architectures: x86_64 and arm64' >&2; exit 1 ;;
+esac
+packaged_node="$source_root/remote/runtimes/$runtime_name"
+if [[ -f "$source_root/PACKAGE-SHA256.json" && -x "$packaged_node" ]]; then
+  node_path="$packaged_node"
+  "$node_path" "$source_root/remote/verify-package.js" "$source_root"
+else
+  node_path=$(command -v node)
+fi
 "$node_path" -e 'if(Number(process.versions.node.split(".")[0])<22)process.exit(1)'
 release_id=$(git -C "$source_root" rev-parse --short=12 HEAD 2>/dev/null || cat "$source_root/RELEASE" 2>/dev/null || date -u +%Y%m%dT%H%M%SZ)
 [[ "$release_id" =~ ^[A-Za-z0-9]+$ ]] || { echo 'Invalid release identifier' >&2; exit 1; }
@@ -23,7 +34,11 @@ install -d -m 0755 "$release"
 cp -R "$source_root/sidecar" "$source_root/shared" "$source_root/frontend" "$source_root/remote" "$release/"
 printf '%s\n' "$release_id" > "$release/RELEASE"
 cp "$source_root/package.json" "$source_root/LICENSE" "$source_root/NOTICE.md" "$release/"
-npm ci --prefix "$release/remote" --omit=dev --ignore-scripts --no-fund
+if [[ -f "$source_root/PACKAGE-SHA256.json" && -x "$packaged_node" ]]; then
+  node_path="$release/remote/runtimes/$runtime_name"
+else
+  npm ci --prefix "$release/remote" --omit=dev --ignore-scripts --no-fund
+fi
 chown -R root:root "$release"
 chmod -R go-w "$release"
 ln -s "$release" /opt/starnet/current.new

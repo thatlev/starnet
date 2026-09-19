@@ -247,12 +247,12 @@ const Dialogue = (() => {
     cfg = cfg || {};
     return new Promise(resolve => {
       ensure(); clearKeys(); clearOpts(); clearGate(true); flushSay();
-      panel.classList.toggle('fnv-text-first', !!(cfg.allowCustom && cfg.customFirst));
+      panel.classList.toggle('fnv-text-first', !!(cfg.allowCustom && cfg.customFirst && !window.__STARNET_REMOTE__));
       let settled = false;
       const finishPick = res => { if (settled) return; settled = true; pendingPick = null; clearKeys(); sfx('click'); resolve(res); };
       typeInto(norm(cfg.lines), () => {
         renderOptions(cfg, finishPick);
-        if (cfg.draft && cfg.allowCustom) openCustom(cfg, finishPick);
+        if ((cfg.draft || (window.__STARNET_REMOTE__ && cfg.customValue)) && cfg.allowCustom) openCustom(cfg, finishPick);
       });
     });
   }
@@ -283,7 +283,8 @@ const Dialogue = (() => {
     pendingPick = { cfg, finishPick };   // arm the composer path (Dialogue.answer) for THIS question
     optsEl.innerHTML = '';
     if (cfg.allowCustom && cfg.customFirst) {
-      renderConversation(cfg, finishPick);
+      if (window.__STARNET_REMOTE__) renderClassicConversation(cfg, finishPick);
+      else renderConversation(cfg, finishPick);
       return;
     }
     const opts = (cfg.options || []).slice();
@@ -379,6 +380,29 @@ const Dialogue = (() => {
     });
   }
 
+  // The remote viewer keeps the classic compact choice list. Suggestions still
+  // ask for the user's own answer; presentation must not invent interview facts.
+  function renderClassicConversation(cfg, finishPick) {
+    for (const option of cfg.options || []) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'fnv-opt' + (option.skip ? ' skip' : '');
+      button.textContent = option.label;
+      button.onclick = () => {
+        if (option.skip || option.open || option.help) {
+          finishPick({ value: option.value == null ? '' : option.value, label: option.label, skip: !!option.skip, help: !!option.help });
+        } else {
+          openCustom({ ...cfg, customPlaceholder: option.steer || ('What would you like help with in ' + option.label.toLowerCase() + '?') }, finishPick);
+        }
+      };
+      optsEl.appendChild(button);
+    }
+    const custom = document.createElement('button');
+    custom.type = 'button'; custom.className = 'fnv-opt custom';
+    custom.textContent = '✎ ' + (cfg.customLabel || 'say it in my own words');
+    custom.onclick = () => openCustom(cfg, finishPick);
+    optsEl.appendChild(custom);
+  }
+
   /* the custom-speech path — swaps the option list for an input. Enter or ▸ submits; ‹ back restores
      the options. An empty submit on an optional node reads as a skip (caller decides via cfg.skipOnEmpty). */
   function openCustom(cfg, finishPick) {
@@ -388,8 +412,8 @@ const Dialogue = (() => {
     const wrap = document.createElement('div'); wrap.className = 'fnv-custom';
     const inp = document.createElement('textarea'); inp.rows = 3; inp.className = 'fnv-custom-in';
     inp.placeholder = cfg.customPlaceholder || 'type your answer…';
-    inp.value = cfg.draft || '';
-    inp.addEventListener('input', () => { cfg.draft = inp.value; cfg.onDraft?.(inp.value); });
+    inp.value = cfg.draft == null ? (cfg.customValue || '') : cfg.draft;
+    inp.addEventListener('input', () => { cfg.draft = inp.value; cfg.onDraft?.(inp.value); cfg.onCustomInput?.(inp.value); });
     inp.setAttribute('aria-label', cfg.customPlaceholder || 'your answer');
     const send = document.createElement('button'); send.className = 'fnv-custom-send'; send.type = 'button'; send.textContent = 'Send →'; send.setAttribute('aria-label', 'Send answer');
     const back = document.createElement('button'); back.className = 'fnv-custom-back'; back.type = 'button'; back.textContent = '‹ back';
@@ -403,7 +427,7 @@ const Dialogue = (() => {
     send.onclick = submit;
     back.onclick = () => { clearKeys(); renderOptions(cfg, finishPick); };
     inp.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
       else if (e.key === 'Escape') { e.preventDefault(); back.onclick(); }
     });
     setTimeout(() => inp.focus(), 30);

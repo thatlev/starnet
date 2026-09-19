@@ -11,3 +11,14 @@ The candidate merges upstream v0.12.3 and adds durable remote provider settings.
 Report any jump with the settings section, elapsed time after opening, and whether an editor was open. For provider issues, share the provider name, model ID and error message; do not share the API key.
 
 Automated verification already exercises a synthetic 429 provider, process restart, two providers, custom endpoints, failed persistence, stale migration after removal, authenticated writes, and no credential readback. A delayed-provider browser check ran for 32 seconds with scroll and draft assertions. These checks do not substitute for the installed Mac acceptance above. The entire upstream test suite has separate known failures documented in PROJECT.md.
+
+## Display and connection setup candidate (0.2.0)
+
+1. Open the rebuilt **StarNet Remote**. Your existing server, character, custom model and keys should remain. A depleted provider must still let you open Settings.
+2. Open **Settings → Providers**, scroll near the bottom immediately, and keep reading for 30 seconds. Repeat after a Gateway reconnect. There should be no upward shift or repeated card fade. Appearance → Screen Flicker remains available if you deliberately want the CRT effect.
+3. Reopen an unfinished conversation. The right panel should use the classic dark presentation and compact choices. A suggestion opens an empty answer editor; it must not silently submit the suggestion. Type an unsent draft, reopen the app and confirm it is retained.
+4. Open **StarNet Remote → Connection Setup…** (Command-K). Your SSH host is prefilled. **Check sign-in** should identify your GitHub account. **Test & save connection** should verify SSH, ownership, runtime and live events without sending a model request. **Open your station** should return to the same saved station.
+5. Enter an unreachable test hostname or wrong port and test. Cancel a check too. Both must retain the prior saved connection; **Return to station** should still work. Restore the correct form details afterward.
+6. The **new server** path is for a disposable/fresh Linux machine, not the existing station. Review the install details, launch the Terminal installer, then test and open the resulting empty station. The current package includes Linux x86_64 and arm64 runtimes; arm64 installation still needs hardware acceptance if only x86_64 was available during validation.
+
+Public release signing/notarization and the official upstream PR are separate from this local candidate. Do not erase working data or revoke real provider keys merely to simulate a fresh install.

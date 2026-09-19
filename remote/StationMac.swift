@@ -17,13 +17,17 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
     var startupScript = ""
     var leaving = false
     var didShowStation = false
-    let stationURL = URL(string: "http://127.0.0.1:8790")!
+    var showingSetup = false
+    var connectionStarted = Date()
+    let setupURL = URL(string: "http://127.0.0.1:18790")!
+    var stationURL = URL(string: "http://127.0.0.1:8790")!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let menu = NSMenu()
         let appMenu = NSMenuItem(); menu.addItem(appMenu)
         let actions = NSMenu(); appMenu.submenu = actions
         actions.addItem(withTitle: "Gateway…", action: #selector(showGateway), keyEquivalent: ",").target = self
+        actions.addItem(withTitle: "Connection Setup…", action: #selector(showSetup), keyEquivalent: "k").target = self
         actions.addItem(withTitle: "Reload Station", action: #selector(reload), keyEquivalent: "r").target = self
         actions.addItem(NSMenuItem.separator())
         actions.addItem(withTitle: "Quit StarNet Remote", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -45,6 +49,7 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
         config.userContentController.add(self, name: "stationStartup")
+        config.userContentController.add(self, name: "connectionSetup")
         if let file = Bundle.main.path(forResource: "startup-observer", ofType: "js", inDirectory: "remote") {
             startupScript = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
         }
@@ -71,6 +76,7 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         guard let resources = Bundle.main.resourcePath else { return }
         let home = NSHomeDirectory()
         let candidates = [
+            resources + "/bin/node",
             ProcessInfo.processInfo.environment["STARNET_NODE_PATH"],
             "/opt/homebrew/bin/node",
             "/usr/local/bin/node",
@@ -84,10 +90,10 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: node)
-        process.arguments = [resources + "/remote/cli.js", "connect"]
+        process.arguments = [resources + "/remote/desktop.js"]
         let nodeDirectory = URL(fileURLWithPath: node).deletingLastPathComponent().path
         let inheritedPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        process.environment = ProcessInfo.processInfo.environment.merging(["PATH": nodeDirectory + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + inheritedPath]) { _, new in new }
+        process.environment = ProcessInfo.processInfo.environment.merging(["PATH": resources + "/bin:" + nodeDirectory + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + inheritedPath]) { _, new in new }
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         do { try process.run(); proxy = process }
@@ -96,24 +102,57 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
     func checkConnection() {
         guard !stopping && !checking else { return }
         if proxy?.isRunning != true { startProxy() }
+        guard !loaded && !showingSetup else { return }
         checking = true
-        var req = URLRequest(url: stationURL.appendingPathComponent("remote/status"))
-        req.timeoutInterval = 15
-        URLSession.shared.dataTask(with: req) { [weak self] _, response, _ in
+        var health = URLRequest(url: setupURL.appendingPathComponent("health"))
+        health.timeoutInterval = 2
+        URLSession.shared.dataTask(with: health) { [weak self] data, response, _ in
+            guard let self = self else { return }
+            let state = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.checking = false
-                guard !self.stopping && !self.loaded else { return }
-                if (response as? HTTPURLResponse)?.statusCode == 200 {
-                    self.loaded = true
-                    self.prepareNavigation()
-                    self.loadingView.status.stringValue = "OPENING YOUR STATION"
-                    self.web.load(URLRequest(url: self.stationURL))
-                } else {
-                    self.loadingView.status.stringValue = "CONNECTING TO GATEWAY"
+                guard !self.stopping && !self.loaded && !self.showingSetup else { self.checking = false; return }
+                if let port = state?["port"] as? Int, (1024...65535).contains(port), port != 18790 {
+                    self.stationURL = URL(string: "http://127.0.0.1:\(port)")!
                 }
+                if (response as? HTTPURLResponse)?.statusCode == 200 && ((state?["configured"] as? Bool) != true || Date().timeIntervalSince(self.connectionStarted) > 20) {
+                    self.checking = false
+                    self.openSetup()
+                    return
+                }
+                var req = URLRequest(url: self.stationURL.appendingPathComponent("remote/status"))
+                req.timeoutInterval = 5
+                URLSession.shared.dataTask(with: req) { [weak self] _, reply, _ in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        self.checking = false
+                        guard !self.stopping && !self.loaded && !self.showingSetup else { return }
+                        if (reply as? HTTPURLResponse)?.statusCode == 200 {
+                            self.loaded = true
+                            self.prepareNavigation()
+                            self.loadingView.status.stringValue = "OPENING YOUR STATION"
+                            self.web.load(URLRequest(url: self.stationURL))
+                        }
+                    }
+                }.resume()
             }
         }.resume()
+    }
+    @objc func showSetup() {
+        guard !leaving else { return }
+        leaving = true
+        flushThen { [weak self] in
+            guard let self = self else { return }
+            self.leaving = false
+            self.openSetup()
+        }
+    }
+    func openSetup() {
+        showingSetup = true; loaded = true; didShowStation = false
+        generation = UUID().uuidString
+        web.stopLoading()
+        web.configuration.userContentController.removeAllUserScripts()
+        beginLoading("CONNECTION SETUP")
+        web.load(URLRequest(url: setupURL))
     }
     func prepareNavigation() {
         generation = UUID().uuidString
@@ -140,6 +179,7 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
     }
     @objc func reload() {
         guard !leaving else { return }
+        if showingSetup { web.reload(); return }
         leaving = true
         flushThen { [weak self] in
             guard let self = self else { return }
@@ -148,6 +188,8 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         }
     }
     func loadAgain() {
+        showingSetup = false
+        connectionStarted = Date()
         didShowStation = false
         generation = UUID().uuidString // reject a late readiness message from the old page
         web.stopLoading()
@@ -156,8 +198,13 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         checkConnection()
     }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.frameInfo.isMainFrame,
-              let url = message.frameInfo.request.url, url.scheme == "http", url.host == "127.0.0.1", url.port == 8790,
+        if message.name == "connectionSetup", message.frameInfo.isMainFrame,
+           let url = message.frameInfo.request.url, url.scheme == "http", url.host == "127.0.0.1", url.port == 18790,
+           let body = message.body as? [String: String], body["event"] == "open-station" {
+            loadAgain(); return
+        }
+        guard message.name == "stationStartup", message.frameInfo.isMainFrame,
+              let url = message.frameInfo.request.url, url.scheme == "http", url.host == "127.0.0.1", url.port == stationURL.port,
               let body = message.body as? [String: String], body["generation"] == generation else { return }
         if body["event"] == "load-error" && !didShowStation {
             generation = UUID().uuidString
@@ -171,14 +218,17 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
         loadingView.finish()
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        beginLoading("OPENING YOUR STATION")
+        beginLoading(showingSetup ? "CONNECTION SETUP" : "OPENING YOUR STATION")
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if showingSetup && webView.url?.port == 18790 { loadingTimeout?.invalidate(); loadingView.finish() }
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         if (error as NSError).code == NSURLErrorCancelled { return }
         loadingTimeout?.invalidate()
         // Initial navigation can fail while SSH is recovering. The existing
         // status loop retries it automatically; an already usable station is kept.
-        if !didShowStation { loaded = false }
+        if !didShowStation { loaded = false; showingSetup = false }
         loadingView.fail("Reconnecting to your station automatically…")
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -186,11 +236,11 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         loadingTimeout?.invalidate()
-        didShowStation = false; loaded = false
+        didShowStation = false; loaded = false; showingSetup = false
         loadingView.fail("Restoring your station view automatically…")
     }
     @objc func showGateway() {
-        guard loaded else { checkConnection(); return }
+        guard loaded && !showingSetup else { showSetup(); return }
         web.evaluateJavaScript("window.StarNetGateway?.open()", completionHandler: nil)
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { NSApp.terminate(nil); return false }
@@ -210,7 +260,7 @@ final class StationApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, W
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
-        if url.scheme == "http" && url.host == "127.0.0.1" && url.port == 8790 { decisionHandler(.allow); return }
+        if url.scheme == "http" && url.host == "127.0.0.1" && (url.port == stationURL.port || url.port == 18790) { decisionHandler(.allow); return }
         if ["https", "http", "mailto"].contains(url.scheme ?? "") { NSWorkspace.shared.open(url) }
         decisionHandler(.cancel)
     }

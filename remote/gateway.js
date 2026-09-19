@@ -108,13 +108,13 @@ function createGateway({ runtimePort, runtimeToken, ownerId, verifyIdentity = gi
       if (req.url === '/remote/logout' && req.method === 'POST') { sessions.delete(digest(token)); return json(res, 200, { ok: true }); }
       if (req.url === '/remote/bootstrap' && req.method === 'GET') return json(res, 200, { token: runtimeToken });
       if (req.url === '/remote/status' && req.method === 'GET') return json(res, 200, {
-        mode: 'remote', host: 'LevServer', user: session.user, expiresAt: session.expiresAt, headless: true
+        mode: 'remote', host: require('node:os').hostname(), user: session.user, expiresAt: session.expiresAt, headless: true
       });
       if (!req.url.startsWith('/') || req.url.startsWith('//') || /[\r\n\\]/.test(req.url)) return json(res, 400, { error: 'invalid path' });
       // The client still supplies the runtime's per-launch API token. It protects
       // the local proxy from malicious sites, in addition to the GitHub session.
       return proxy(req, res, { port: runtimePort, agent, headers: { origin: 'http://127.0.0.1:' + runtimePort },
-        transformHtml: html => html.replace('</head>', '<script>window.__STARNET_REMOTE__=true;</script><script defer src="/app/remote-channels.js"></script><script defer src="/app/remote-status.js"></script></head>') });
+        transformHtml: html => html.replace('</head>', '<script>window.__STARNET_REMOTE__=true;document.documentElement.classList.add("remote-station");</script><link rel="stylesheet" href="/css/remote.css"><script defer src="/app/remote-channels.js"></script><script defer src="/app/remote-status.js"></script></head>') });
     } catch (_) {
       if (!res.headersSent) json(res, 400, { error: 'invalid request' }); else res.destroy();
     }
@@ -135,7 +135,7 @@ function createClient({ gatewayPort, localPort, getSession, invalidateSession })
     try {
       const session = await getSession();
       proxy(req, res, { port: gatewayPort, agent, headers: { authorization: 'Bearer ' + session.token }, onUnauthorized: invalidateSession });
-    } catch (_) { json(res, 503, { error: 'Reconnecting to LevServer. Existing runs continue on the server.' }); }
+    } catch (_) { json(res, 503, { error: 'Reconnecting to your server. Existing runs continue on the server.' }); }
   });
   server.once('close', () => agent.destroy());
   server.headersTimeout = 15000;

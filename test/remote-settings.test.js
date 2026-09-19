@@ -20,3 +20,14 @@ test('an asynchronous content completion preserves the position at completion an
   assert.equal(pane.scrollTop, 1800, 'a later reply uses the user\'s new position');
   assert.doesNotMatch(fnBody(src, 'function preserveScroll('), /requestAnimationFrame|setTimeout/);
 });
+test('account refresh reserves the previous content height until Settings closes', () => {
+  const retain = Function(fnBody(src, 'function retainCreditsHeight(') + ';return retainCreditsHeight;')();
+  const host = { offsetHeight: 243, style: {} };
+  retain(host);
+  host.offsetHeight = 24; // asynchronous loading placeholder
+  retain(host);
+  assert.equal(host.style.minHeight, '243px', 'the scroll range cannot temporarily collapse');
+  host.offsetHeight = 320;
+  retain(host);
+  assert.equal(host.style.minHeight, '320px', 'longer results can expand normally');
+});
