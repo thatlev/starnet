@@ -1148,58 +1148,29 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
         } catch (_) { /* a rebuilt control that refuses restore is no worse than the old wipe */ }
       }
     };
-    let scrollRevision = 0;
-    let scrollRestoreToken = 0;
-    let restoringScroll = false;
-    body.addEventListener('scroll', () => {
-      if (!restoringScroll) scrollRevision += 1;
-    }, true);
     const captureScroll = () => {
       const rows = [];
-      for (const el of [body, ...body.querySelectorAll('*')]) {
+      for (const el of [body, ...body.querySelectorAll(key === 'settings' ? '.con-pane, .con-rail-list' : '*')]) {
         if (el.scrollHeight <= el.clientHeight && el.scrollWidth <= el.clientWidth) continue;
         rows.push({ root: el === body, path: el === body ? null : ctrlPath(el), top: el.scrollTop, left: el.scrollLeft });
       }
       return rows;
     };
     const restoreScroll = (rows) => {
-      restoringScroll = true;
-      try {
-        for (const r of rows) {
-          let el = r.root ? body : null;
-          if (!el) { try { el = ctrlFind(r.path); } catch (_) { el = null; } }
-          if (!el) continue;
-          el.scrollTop = r.top;
-          el.scrollLeft = r.left;
-        }
-      } finally {
-        restoringScroll = false;
+      for (const r of rows || []) {
+        let el = r.root ? body : null;
+        if (!el) { try { el = ctrlFind(r.path); } catch (_) {} }
+        if (el) { el.scrollTop = r.top; el.scrollLeft = r.left; }
       }
-    };
-    const scheduleScrollRestore = (rows, revision) => {
-      const token = ++scrollRestoreToken;
-      if (!rows || !rows.length) return;
-      restoreScroll(rows);
-      requestAnimationFrame(() => {
-        if (token !== scrollRestoreToken || scrollRevision !== revision) return;
-        restoreScroll(rows);
-        requestAnimationFrame(() => {
-          if (token !== scrollRestoreToken || scrollRevision !== revision) return;
-          restoreScroll(rows);
-          setTimeout(() => {
-            if (token !== scrollRestoreToken || scrollRevision !== revision) return;
-            restoreScroll(rows);
-          }, 80);
-        });
-      });
     };
     w._render = (swap) => {
       const keep = swap === false ? captureForms() : null;   // background poke: preserve what the Commander typed
       const keepScroll = swap === false ? captureScroll() : null;
-      const scrollMark = scrollRevision;
+      const disclosures = swap === false ? Array.from(body.querySelectorAll('details, .key-edit[id]'), el => ({ path: ctrlPath(el), hidden: el.hidden, open: el.open })) : [];
       builder(body);
+      for (const row of disclosures) { const el = ctrlFind(row.path); if (el) { el.hidden = row.hidden; if (row.open != null) el.open = row.open; } }
       if (keep && keep.length) restoreForms(keep);
-      if (keepScroll && keepScroll.length) scheduleScrollRestore(keepScroll, scrollMark);
+      restoreScroll(keepScroll);
       // tab/section crossfade: fade the freshly-injected body in on RE-renders (tab swaps,
       // live refreshes) — not on the initial mount, which already plays the CRT power-on.
       if (swap) {
@@ -1226,7 +1197,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
      panel the Commander is reading. */
   // swap=false → no crossfade AND form-state preservation: a background DATA poke repaints in place with
   // every in-progress field value, focus and selection carried across the rebuild (see w._render).
-  function rerender(key, swap) { if (open[key]) open[key]._render(swap !== false); }
+  function rerender(key, swap) { if (open[key]) open[key]._render(swap == null ? key !== 'settings' : swap !== false); }
   function syncBB() {
     document.querySelectorAll('.bb[data-term]').forEach(b => b.classList.toggle('active', !!open[b.dataset.term]));
   }
@@ -4262,7 +4233,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   function scheduleSettingsRepaint() {
     if (settingsRepaintQueued || !open.settings) return;
     settingsRepaintQueued = true;
-    setTimeout(() => { settingsRepaintQueued = false; if (open.settings) rerender('settings'); }, SETTINGS_REPAINT_COALESCE_MS);
+    setTimeout(() => { settingsRepaintQueued = false; if (open.settings) rerender('settings', false); }, SETTINGS_REPAINT_COALESCE_MS);
   }
 
   // the REAL connected providers: OpenRouter from the BYOK store, Codex from sidecar OAuth status.
@@ -4355,6 +4326,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   // honest one-liner for where a just-saved key was stored. Falls back to the neutral "on this machine" until the
   // probe answers, so we never assert keychain-vs-browser before we actually know it.
   function keyStoreClause() {
+    if (window.__STARNET_REMOTE__) return 'stored securely on your server';
     if (keychainModeKnown === true) return 'stored in your OS keychain';
     if (keychainModeKnown === false) return 'stored locally in this browser';
     return 'stored on this machine';
@@ -4370,10 +4342,26 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       .catch(() => { providerHealth[provider] = null; })
       .finally(() => {
         delete providerProbePending[provider];
-        // Repaint only while Settings is still open. The cache prevents this repaint from starting a probe loop,
-        // and the coalescer folds several providers' probes finishing together into a single rebuild.
-        scheduleSettingsRepaint();
+        // A health reply changes labels, not the settings form. Keep the pane and its controls alive:
+        // rebuilding them reissues every settings request and destroys open editors while the user scrolls.
+        paintProviderHealth();
       });
+  }
+  function paintProviderHealth() {
+    const win = open.settings;
+    if (!win) return;
+    const template = document.createElement('div');
+    template.innerHTML = providersHtml();
+    preserveScroll(() => {
+      for (const fresh of template.querySelectorAll('.prov-card[data-provider]')) {
+        const card = win.querySelector('.prov-card[data-provider="' + fresh.dataset.provider + '"]');
+        if (!card) continue;
+        for (const selector of ['.prov-stat', '.prov-name']) {
+          const current = card.querySelector(selector), next = fresh.querySelector(selector);
+          if (current && next && current.innerHTML !== next.innerHTML) current.innerHTML = next.innerHTML;
+        }
+      }
+    });
   }
   function queueProviderHealthRefresh() {
     const h = H(); if (!h) return;
@@ -4850,8 +4838,9 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
           try { new URL(norm); } catch (_) { sfx('bad'); setMsg('that doesn\'t look like a URL', 'bad'); return; }
           if (inp) inp.value = norm;
           sfx('click');
-          setMsg('saved — probing endpoint…', '');
+          setMsg('saving endpoint…', '');
           Promise.resolve(h.setBaseUrl ? h.setBaseUrl(norm, row.provider) : null).then(() => {
+            setMsg('saved — probing endpoint…', '');
             invalidateProviderHealth(row.provider);
             // HONEST reachability check against the REAL endpoint — never claim connected without proof. probeProvider
             // round-trips /api/providers/probe; the same probe result feeds the provider card badge cache.
@@ -4881,11 +4870,19 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
         } else if (act === 'rm') {
           // a KEYLESS custom row has no key to clear — its REMOVE disconnects the endpoint itself (setBaseUrl('')),
           // otherwise the armed confirm would "remove" nothing and the row would immortally re-render.
-          const keylessCustomRm = row.provider === 'custom' && !row.key && !!row.baseUrl;
+          const keylessCustomRm = row.provider === 'custom' && !row.key && !row.stored && !!row.baseUrl;
           if (b.dataset.armed) {
-            if (keylessCustomRm && h.setBaseUrl) { h.setBaseUrl('', 'custom'); notify('removed the custom endpoint — add it again anytime from the CUSTOM card', 'warn'); }
-            else { if (h.setKey) h.setKey('', row.provider); notify('removed ' + provName(row.provider) + ' key — paste a new one here to reconnect', 'warn'); }
-            invalidateProviderHealth(row.provider); if (typeof ModelDock !== 'undefined' && ModelDock.reflect) ModelDock.reflect(); if (typeof KeyCTA !== 'undefined' && KeyCTA.refresh) KeyCTA.refresh(); sfx('bad'); rerender('settings'); return;
+            b.disabled = true;
+            const removal = keylessCustomRm ? h.setBaseUrl('', 'custom') : h.setKey('', row.provider);
+            Promise.resolve(removal).then(() => {
+              notify(keylessCustomRm ? 'removed the custom endpoint — add it again anytime from the CUSTOM card'
+                : 'removed ' + provName(row.provider) + ' key — paste a new one here to reconnect', 'warn');
+              invalidateProviderHealth(row.provider);
+              if (typeof ModelDock !== 'undefined' && ModelDock.reflect) ModelDock.reflect();
+              if (typeof KeyCTA !== 'undefined' && KeyCTA.refresh) KeyCTA.refresh();
+              sfx('bad'); rerender('settings');
+            }).catch(error => { b.disabled = false; notify((error && error.message) || 'Could not remove the credential', 'bad'); });
+            return;
           }
           // Arm: make the destructive state impossible to miss — filled --bad button + pulse, red hairline on the row,
           // and an inline "click again to confirm" hint. Disarms after 5s, restoring the calm state.
@@ -6463,7 +6460,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     (() => {
       const was = creditsProv.state + ':' + creditsProv.balanceUsd + ':' + creditsProv.tier;
       refreshCreditsProvider().then(() => {
-        if (was !== creditsProv.state + ':' + creditsProv.balanceUsd + ':' + creditsProv.tier) rerender('settings');
+        if (was !== creditsProv.state + ':' + creditsProv.balanceUsd + ':' + creditsProv.tier) scheduleSettingsRepaint();
       }).catch(() => {});
     })();
     wireCredits(host);
@@ -9675,45 +9672,12 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     wireVerdict(nsNo, 'decline', 'warn');
   }
 
-  let globalScrollRestoreToken = 0;
-  let globalScrollRevision = 0;
-  let globalRestoringScroll = false;
-  document.addEventListener('scroll', () => {
-    if (!globalRestoringScroll) globalScrollRevision += 1;
-  }, true);
-  function captureGlobalScroll() {
-    const rows = [];
-    for (const el of document.querySelectorAll('.term-body, .con-pane')) {
-      if (el.scrollHeight <= el.clientHeight && el.scrollWidth <= el.clientWidth) continue;
-      rows.push({ el, top: el.scrollTop, left: el.scrollLeft });
-    }
-    return rows;
-  }
   function preserveScroll(update) {
-    const rows = captureGlobalScroll();
-    const revision = globalScrollRevision;
-    const token = ++globalScrollRestoreToken;
+    const rows = Array.from(document.querySelectorAll('.term-body, .con-pane'), el => ({ el, top: el.scrollTop, left: el.scrollLeft }));
     update();
-    const restore = () => {
-      if (token !== globalScrollRestoreToken || globalScrollRevision !== revision) return;
-      globalRestoringScroll = true;
-      try {
-        for (const row of rows) {
-          row.el.scrollTop = row.top;
-          row.el.scrollLeft = row.left;
-        }
-      } finally {
-        globalRestoringScroll = false;
-      }
-    };
-    restore();
-    requestAnimationFrame(() => {
-      restore();
-      requestAnimationFrame(() => {
-        restore();
-        setTimeout(restore, 80);
-      });
-    });
+    for (const { el, top, left } of rows) {
+      if (el.isConnected) { el.scrollTop = top; el.scrollLeft = left; }
+    }
   }
 
   /* ============== lifecycle ============== */

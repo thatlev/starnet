@@ -6,7 +6,9 @@ command -v node >/dev/null
 command -v gh >/dev/null
 gh api user --jq '{login,id}'
 owner_id=$(gh api user --jq .id)
-node "$source_root/remote/cli.js" configure --host lev-server-direct --owner "$owner_id" --gateway-port 18791
+if [[ ! -f "$HOME/.config/starnet-remote/config.json" ]]; then
+  node "$source_root/remote/cli.js" configure --host lev-server-direct --owner "$owner_id" --gateway-port 18791
+fi
 app_target=${1:-/Applications/StarNet Remote.app}
 mkdir -p "$source_root/work/mac-build"
 build_root=$(mktemp -d "$source_root/work/mac-build/build.XXXXXX")
@@ -28,13 +30,14 @@ cat > "$app_build/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>StarNet Remote</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
-<key>CFBundleVersion</key><string>3</string>
-<key>CFBundleShortVersionString</key><string>0.1.2</string>
+<key>CFBundleVersion</key><string>4</string>
+<key>CFBundleShortVersionString</key><string>0.1.3</string>
 <key>CFBundleIconFile</key><string>Station</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
 PLIST
+git -C "$source_root" rev-parse HEAD > "$app_build/Contents/Resources/SOURCE_REVISION"
 codesign --force --sign - "$app_build"
 codesign --verify --strict "$app_build"
 if [[ -e "$app_target" ]]; then
@@ -43,8 +46,7 @@ if [[ -e "$app_target" ]]; then
   backup_root="$source_root/work/mac-build/replaced-apps"
   mkdir -p "$backup_root"
   backup_target="$backup_root/StarNet Remote $(date +%Y%m%d-%H%M%S).app"
-  ditto "$app_target" "$backup_target"
-  rm -rf "$app_target"
+  mv "$app_target" "$backup_target"
 fi
 ditto "$app_build" "$app_target"
 echo "Installed $app_target (local build, ad-hoc signed). No agent tasks created."

@@ -1888,9 +1888,12 @@ const App = (() => {
     if (baseBlock) baseBlock.classList.toggle('hidden', !providerNeedsBaseUrl(pickedProvider));
     if (baseInput) {
       baseInput.value = (Harness.getBaseUrl && Harness.getBaseUrl(pickedProvider)) || '';
-      baseInput.onchange = () => {
-        if (Harness.setBaseUrl) Harness.setBaseUrl(baseInput.value.trim(), pickedProvider);
-        loadModels(pickedProvider);
+      baseInput.onchange = async () => {
+        const provider = pickedProvider;
+        try {
+          if (Harness.setBaseUrl) await Harness.setBaseUrl(baseInput.value.trim(), provider);
+          if (pickedProvider === provider) loadModels(provider);
+        } catch (error) { el('connect-msg').textContent = error.message || 'Could not save the endpoint.'; }
       };
       baseInput.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); onWake(); } };
     }
@@ -2644,7 +2647,7 @@ const App = (() => {
     if (saved && saved.agent) {
       const provider = restoreSavedProvider(saved);
       if (saved.reasoningEffort && Harness.setReasoningEffort) Harness.setReasoningEffort(saved.reasoningEffort);
-      if (Harness.getKey(provider) || (Harness.configured && Harness.configured(provider)) || provider === 'codex') {
+      if (window.__STARNET_REMOTE__ || Harness.getKey(provider) || (Harness.configured && Harness.configured(provider)) || provider === 'codex') {
         resumingSaved = null; resumeInto(saved); return;
       }
       resumingSaved = saved;
@@ -5155,7 +5158,7 @@ const App = (() => {
       // and if that is slow/blocked, awaiting it here strands boot on the connect screen forever (the seeded DEV
       // shoot regression). The catalog is cosmetic for resume (dropdown/pricing/context gauge), so fire it in the
       // BACKGROUND and enter the station immediately — pricing fills in a beat later, the floor never waits.
-      const canResume = !!(Harness.getKey(savedProvider) || (Harness.configured && Harness.configured(savedProvider)) || savedProvider === 'codex');
+      const canResume = !!(window.__STARNET_REMOTE__ || Harness.getKey(savedProvider) || (Harness.configured && Harness.configured(savedProvider)) || savedProvider === 'codex');
       if (canResume) {
         if (Harness.getProv && Harness.getProv() !== 'codex' && Harness.listModels) { Promise.resolve(Harness.listModels()).catch(() => {}); }
         resumeInto(saved); return;

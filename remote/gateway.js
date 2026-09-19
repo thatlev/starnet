@@ -32,13 +32,13 @@ async function githubIdentity(token) {
 
 // Streaming proxy: never buffers run output or SSE. Losing a viewer closes only
 // the transport. The runtime's server-owned run mode controls execution lifetime.
-function proxy(req, res, { port, headers = {}, url = req.url, transformHtml, onUnauthorized }) {
+function proxy(req, res, { port, headers = {}, url = req.url, transformHtml, onUnauthorized, agent }) {
   const forwarded = {};
   for (const key of ['content-type', 'accept', 'last-event-id', 'range', 'if-none-match', 'x-starnet-token', 'x-skynet-token']) {
     if (req.headers[key]) forwarded[key] = req.headers[key];
   }
   const upstream = http.request({ host: '127.0.0.1', port, method: req.method, path: url,
-    headers: { ...forwarded, ...headers, host: '127.0.0.1:' + port }, agent: false }, reply => {
+    headers: { ...forwarded, ...headers, host: '127.0.0.1:' + port }, agent }, reply => {
     if (reply.statusCode === 401) onUnauthorized?.();
     const out = { ...reply.headers, 'cache-control': 'no-store', 'x-accel-buffering': 'no' };
     delete out['access-control-allow-origin']; delete out['access-control-allow-credentials'];
@@ -72,6 +72,7 @@ function proxy(req, res, { port, headers = {}, url = req.url, transformHtml, onU
 function createGateway({ runtimePort, runtimeToken, ownerId, verifyIdentity = githubIdentity,
   now = Date.now, sessionMs = 12 * 60 * 60 * 1000 }) {
   if (!Number.isSafeInteger(ownerId) || ownerId <= 0 || !runtimeToken) throw new Error('ownerId and runtimeToken required');
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 8 });
   const sessions = new Map();
   let loginAttempts = [];
   const digest = value => crypto.createHash('sha256').update(value).digest('hex');
@@ -112,12 +113,13 @@ function createGateway({ runtimePort, runtimeToken, ownerId, verifyIdentity = gi
       if (!req.url.startsWith('/') || req.url.startsWith('//') || /[\r\n\\]/.test(req.url)) return json(res, 400, { error: 'invalid path' });
       // The client still supplies the runtime's per-launch API token. It protects
       // the local proxy from malicious sites, in addition to the GitHub session.
-      return proxy(req, res, { port: runtimePort, headers: { origin: 'http://127.0.0.1:' + runtimePort },
+      return proxy(req, res, { port: runtimePort, agent, headers: { origin: 'http://127.0.0.1:' + runtimePort },
         transformHtml: html => html.replace('</head>', '<script>window.__STARNET_REMOTE__=true;</script><script defer src="/app/remote-channels.js"></script><script defer src="/app/remote-status.js"></script></head>') });
     } catch (_) {
       if (!res.headersSent) json(res, 400, { error: 'invalid request' }); else res.destroy();
     }
   });
+  server.once('close', () => agent.destroy());
   server.headersTimeout = 15000;
   server.requestTimeout = 60000;
   server.maxConnections = 128;
@@ -125,15 +127,17 @@ function createGateway({ runtimePort, runtimeToken, ownerId, verifyIdentity = gi
 }
 
 function createClient({ gatewayPort, localPort, getSession, invalidateSession }) {
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 8 });
   const server = http.createServer(async (req, res) => {
     req.socket.setNoDelay(true);
     if (!isAllowedHost(req.headers.host) || !isAllowedApiOrigin(req.headers.origin, localPort)
       || req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, { error: 'untrusted origin' });
     try {
       const session = await getSession();
-      proxy(req, res, { port: gatewayPort, headers: { authorization: 'Bearer ' + session.token }, onUnauthorized: invalidateSession });
+      proxy(req, res, { port: gatewayPort, agent, headers: { authorization: 'Bearer ' + session.token }, onUnauthorized: invalidateSession });
     } catch (_) { json(res, 503, { error: 'Reconnecting to LevServer. Existing runs continue on the server.' }); }
   });
+  server.once('close', () => agent.destroy());
   server.headersTimeout = 15000;
   server.requestTimeout = 60000;
   server.maxConnections = 128;

@@ -810,6 +810,8 @@ const processFault = makeProcessFaultHandler({
 process.on('uncaughtException', e => processFault.onUncaught(e));
 
 try { fs.mkdirSync(WORKSPACES, { recursive: true }); } catch (e) {}
+const remoteProviderStore = REMOTE_MODE ? require('./remote-provider-store').createRemoteProviderStore({ fs, path, dir: path.join(WORKSPACES, '.secrets') }) : null;
+
 
 /* ---- P2 crash-safe persistence helpers for the single-file sibling stores (roster, dossier, channel
    secrets, codex tokens, connectors, allowlist, notebook, cron routines). Each of these was a plain
@@ -2060,6 +2062,8 @@ function providerRuntimeKey(provider, explicitKey) {
   if (id === 'starnet') return String(resolveCreditsConfig().apiKey || '').trim();
   const explicit = String(explicitKey || '').trim();
   if (explicit) return explicit;
+  const saved = remoteProviderStore && remoteProviderStore.get(id);
+  if (saved && Object.hasOwn(saved, 'key')) return saved.key;
   const runtime = String(runtimeKeys[id] || '').trim();
   if (runtime) return runtime;
   const profile = getProviderProfile(id);
@@ -2068,9 +2072,10 @@ function providerRuntimeKey(provider, explicitKey) {
 }
 function providerRuntimeKeyPool(provider, explicitPool) {
   const id = normalizeProvider(provider);
+  const saved = remoteProviderStore && remoteProviderStore.get(id);
   const source = Array.isArray(explicitPool)
     ? explicitPool
-    : (Object.prototype.hasOwnProperty.call(runtimeKeyPools, id)
+    : (saved && Object.hasOwn(saved, 'keyPool') ? saved.keyPool : Object.prototype.hasOwnProperty.call(runtimeKeyPools, id)
       ? runtimeKeyPools[id]
       : String(ENV('KEY_POOL_' + id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')) || '').split(','));
   return Array.from(new Set(source.map(k => String(k || '').trim()).filter(Boolean))).slice(0, 8);
@@ -2088,6 +2093,8 @@ function providerRuntimeBaseUrl(provider, explicitBaseUrl) {
   // BYOK endpoint must never redirect the device token away from that account's service.
   const explicit = String(explicitBaseUrl || '').trim();
   if (explicit) return explicit;
+  const saved = remoteProviderStore && remoteProviderStore.get(id);
+  if (saved && Object.hasOwn(saved, 'baseUrl')) return saved.baseUrl || (getProviderProfile(id) || {}).baseUrl || '';
   const runtime = String(runtimeBaseUrls[id] || '').trim();
   if (runtime) return runtime;
   const profile = getProviderProfile(id);
@@ -9229,6 +9236,7 @@ const ROUTES = [
   { m: 'GET', exact: '/api/providers', h: handleProviders },
   { m: 'POST', exact: '/api/providers/probe', h: handleProviderProbe },
   { m: 'POST', exact: '/api/providers/validate', h: handleProviderValidate },
+  { m: 'POST', exact: '/api/providers/config', h: handleRemoteProviderConfig },
   // /api/models/openrouter is served by this same prefix (id='openrouter'). handleProviderModels answers 200
   // with {models:[]} + error on any catalog failure, so it never throws into the central guard.
   { m: 'GET', qprefix: '/api/models/', h: handleProviderModels },
@@ -19461,14 +19469,48 @@ function handleProviders(req, res) {
   const providers = listProviderProfiles().map(p => {
     const key = providerRuntimeKey(p.id, '');
     const baseUrl = providerRuntimeBaseUrl(p.id, '');
-    return Object.assign({}, p, { configured: providerHasCredential(p.id, key, baseUrl), currentBaseUrl: baseUrl || '' });
+    const configured = providerHasCredential(p.id, key, baseUrl);
+    const credentialStored = registryProviderUsesCodex(p.id) || registryProviderUsesDeviceOAuth(p.id) ? configured : !!key;
+    return Object.assign({}, p, { configured, currentBaseUrl: baseUrl || '', ...(REMOTE_MODE ? { credentialStored, alternateCount: providerRuntimeKeyPool(p.id).length } : {}) });
   });
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   // keychainMode: TRUE only under the real desktop shell, where BYOK keys live in the OS keychain (seeded via env
   // at spawn, updated live through /api/key) rather than the browser's local store. The Settings key-save
   // confirmation reads this so it names the ACTUAL store honestly (keychain vs this browser) — never claims
   // keychain when the key is in fact held in the browser (truthful-telemetry law).
-  res.end(JSON.stringify({ providers, keychainMode: DESKTOP_SHELL }));
+  res.end(JSON.stringify({ providers, keychainMode: DESKTOP_SHELL, ...(REMOTE_MODE ? { credentialStore: 'server', storageError: remoteProviderStore.error() } : {}) }));
+}
+
+// The regular authenticated API gate protects this remote-only route. Never expose the desktop IPC token.
+async function handleRemoteProviderConfig(req, res) {
+  const json = (code, value) => respondJson(res, code, value);
+  if (!remoteProviderStore) return json(404, { error: 'Remote provider storage is unavailable.' });
+  let body;
+  try { body = JSON.parse(await readBody(req, 1 << 16)); } catch (_) { return json(400, { error: 'Invalid provider configuration.' }); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return json(400, { error: 'Invalid provider configuration.' });
+  const id = normalizeProviderIdFromRegistry(body.provider, '');
+  const profile = id && getProviderProfile(id);
+  if (!profile || registryProviderUsesCodex(id) || registryProviderUsesDeviceOAuth(id) || id === 'starnet') return json(400, { error: 'This provider uses a different credential store.' });
+  const patch = {};
+  for (const name of ['key', 'baseUrl']) {
+    if (!Object.hasOwn(body, name)) continue;
+    if (typeof body[name] !== 'string' || body[name].length > 8192) return json(400, { error: 'Invalid provider configuration.' });
+    patch[name] = body[name].trim();
+  }
+  if (patch.baseUrl) {
+    try { const url = new URL(patch.baseUrl); if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error(); }
+    catch (_) { return json(400, { error: 'Enter an HTTP or HTTPS API base URL without credentials, query or fragment.' }); }
+  }
+  if (Object.hasOwn(body, 'keyPool')) {
+    if (!Array.isArray(body.keyPool) || body.keyPool.length > 8 || body.keyPool.some(k => typeof k !== 'string' || k.length > 8192)) return json(400, { error: 'Invalid backup keys.' });
+    patch.keyPool = [...new Set(body.keyPool.map(k => k.trim()).filter(Boolean))];
+  }
+  if (!Object.keys(patch).length) return json(400, { error: 'No provider configuration supplied.' });
+  try { remoteProviderStore.update(id, patch, { migrate: body.migrate === true }); }
+  catch (_) { return json(503, { error: 'Provider save could not be confirmed. Reconnect and check provider settings before retrying.' }); }
+  const key = providerRuntimeKey(id, ''), baseUrl = providerRuntimeBaseUrl(id, '');
+  return json(200, { ok: true, provider: id, configured: providerHasCredential(id, key, baseUrl), credentialStored: !!key,
+    currentBaseUrl: baseUrl, alternateCount: providerRuntimeKeyPool(id).length });
 }
 
 // POST /api/providers/probe — a no-generation provider round-trip for truthful Settings telemetry. The supplied

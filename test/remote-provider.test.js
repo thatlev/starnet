@@ -60,7 +60,7 @@ test('Mac harness selects the server-held provider and launches with an ID, with
   };
   const context = vm.createContext({ window: { __STARNET_REMOTE__: true, __STARNET_API_TOKEN__: 'test-only' },
     location: { origin: 'http://127.0.0.1:8790' }, console, fetch: fetcher, crypto: require('node:crypto').webcrypto,
-    TextDecoder, AbortController, setTimeout, clearTimeout,
+    TextDecoder, AbortController, AbortSignal, setTimeout, clearTimeout,
     localStorage: { getItem: k => cache.get(k) || null, setItem: (k,v) => cache.set(k,v), removeItem: k => cache.delete(k) } });
   const harness = vm.runInContext(fs.readFileSync(path.join(__dirname, '../frontend/app/harness.js'), 'utf8') + '\nHarness', context);
   await harness.init();

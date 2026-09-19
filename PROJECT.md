@@ -1,7 +1,26 @@
 # StarNet Remote
 
-Private hard fork of androoAGI/starnet at 6e076c5d28895d19f938c9eaadc5e1fe21178cf3.
+Private fork of androoAGI/starnet, updated through v0.12.3 (`3ba5b84922f3b62caa4e159999ef3acc82af2a3e`) on its default `feat/harness-backend` branch.
 Upstream history, MIT license and notices are retained.
+
+## Active release: durable providers and stable remote settings
+
+- [x] Compare with the current upstream default branch and merge its updates.
+- [x] Persist remote provider credentials and custom endpoints on the server; resume saved stations without an inference or balance gate.
+- [x] Keep provider settings scroll, focus and edits stable during delayed background loads.
+- [x] Review and simplify the remote additions, including gateway connection reuse and recovery.
+- [x] Run focused regressions, attempt upstream fast/HTTP gates and build the native candidate.
+- [ ] Install the reviewed server and Mac test candidate, retaining the old release and client state.
+- [ ] Push the reviewed release to the private fork and document Lev's acceptance steps. Upstream PR waits for Lev's testing.
+
+Implementation: remote API keys, custom endpoints and backup keys now use the server's protected `.secrets/remote-providers.json` store. Writes are atomic, fsynced and confirmed before the viewer deletes its legacy copies. Migration is insert-only so an older viewer cannot undo a replacement or removal. The desktop keychain and privileged IPC gate remain unchanged. Saved remote stations open independently of provider availability or quota. Custom model IDs survive catalogs that omit them.
+
+Settings health results update existing card labels instead of rebuilding the form. Necessary background rebuilds preserve the current scroll, open editors, draft values and focus synchronously; deferred scroll restoration timers are removed. Both proxy hops reuse bounded HTTP connections, without adding retries or buffering SSE. The Mac installer preserves connection settings and retains the previous app. Upstream's README and workflows are restored; Actions remain disabled on the private fork.
+
+Validation: isolated remote persistence/restart/authentication/quota tests; all remote behavior tests; 20 selected upstream lifecycle, consent, save and recovery suites; provider registry, compatible-provider, timeout, model reconciliation, pricing, connector and onboarding checks; website mirror validation; native Swift compilation and signing. An actual browser with a provider delayed 15 seconds and returning 429 stayed in the station for 32 seconds, retained the custom model, and kept every sampled scroll position and unsaved editor value through background updates. Tests use synthetic credentials and do not run production inference. See [acceptance steps](docs/remote/TESTING.md).
+
+Broader gate limitations, queued separately before an upstream PR: the full fast gate stops at `ledger-reconcile.test.js` because the fork's larger QA report is truncated by the CLI's immediate `process.exit(0)` while stdout is piped. The untouched upstream checkout passes this case. The HTTP gate also exposes macOS `/var` versus `/private/var` expectations in `e2e.pathtrust.test.js` and a script-only job creation expectation in `cron.api.test.js`; both failures reproduce on the untouched v0.12.3 checkout. A remaining-fast run was stopped in the long-running product-claims audit. The complete upstream gates are therefore not green. The unrelated QA/path/cron work is not claimed fixed by this remote release.
+
 
 ## Release: responsive Mac viewer and resumable setup
 

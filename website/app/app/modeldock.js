@@ -212,7 +212,7 @@ const ModelDock = (() => {
     // Preserve a saved current model only while the active catalog is unavailable. Once a successful catalog
     // says it is absent, reconcileCurrentModel() has either mapped it to a proven provider-native id or cleared
     // it. Re-inserting it here was the stale-model bug: a bare Anthropic id appeared selectable under STARNET.
-    if (current && isAgentModel({ id: current, provider: p }) && !list.some(m => m.id === current && normalizeProvider(m.provider) === p) && !(catalogState[p] && catalogState[p].confirmed)) {
+    if (current && isAgentModel({ id: current, provider: p }) && !list.some(m => m.id === current && normalizeProvider(m.provider) === p) && (p === 'custom' || !(catalogState[p] && catalogState[p].confirmed))) {
       list.unshift({ id: current, name: current, provider: p, fallback: true, unverifiedCurrent: true });
     }
     return list.filter(m => m && m.id && isAgentModel(m));
@@ -235,6 +235,8 @@ const ModelDock = (() => {
 
   function reconcileCurrentModel(p, list) {
     p = normalizeProvider(p);
+    // Custom servers may omit private deployments from /models. A user-entered ID stays authoritative.
+    if (p === 'custom') return;
     if (!(catalogState[p] && catalogState[p].confirmed)) return;
     const current = getModel();
     if (!current || (Array.isArray(list) && list.some(m => m && m.id === current))) return;

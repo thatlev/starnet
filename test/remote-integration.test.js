@@ -81,7 +81,8 @@ test('real runtime finishes after viewer closes, replays live events, fences ret
     const feed = new AbortController();
     const events = await fetch(base + '/api/channels/events?token=' + token, { signal: feed.signal });
     const reader = events.body.getReader();
-    const ready = new TextDecoder().decode((await reader.read()).value);
+    let ready = '';
+    await until(async () => { ready += new TextDecoder().decode((await reader.read()).value); return ready.includes('"stream":"ready"'); });
     assert.match(ready, /"stream":"ready"/);
     const cursor = ready.match(/"cursor":"([^"]+)"/)[1];
     release();
@@ -99,7 +100,9 @@ test('real runtime finishes after viewer closes, replays live events, fences ret
     assert.match(save.save.workstreams.find(w => w.id === 'test-session').history.at(-1).content, /Finished on Linux/);
     const replayStop = new AbortController();
     const replay = await fetch(base + '/api/channels/events?token=' + token + '&cursor=' + encodeURIComponent(cursor), { signal: replayStop.signal });
-    const replayed = new TextDecoder().decode((await replay.body.getReader().read()).value);
+    const replayReader = replay.body.getReader();
+    let replayed = '';
+    await until(async () => { replayed += new TextDecoder().decode((await replayReader.read()).value); return replayed.includes('agent.run.end'); });
     assert.match(replayed, /agent.run.end/); assert.match(replayed, /remoteStreamId/); replayStop.abort();
 
     const cancelWatch = new AbortController();

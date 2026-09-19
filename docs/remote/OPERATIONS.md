@@ -8,6 +8,10 @@ The server owns the runtime, tool processes, delegation, routing, scheduled work
 
 SSE passes through both proxies without response buffering. Reconnect uses the existing event cursor/replay and snapshot protocol. Transcripts, run journals and station saves supply durable history beyond the bounded event replay buffer. Live round-trip latency is available under Gateway > Connection details; it is a measurement, not an SLA.
 
+Remote API keys, custom base URLs and backup keys persist on the server. Existing browser credentials migrate on the next connected opening; browser copies are removed only after a durable server acknowledgement. Migration cannot overwrite a newer server record or resurrect a removed key. The store uses a private directory (0700) and file (0600), atomic replacement and fsync. It is not an encrypted keychain; protect the server account and private vault. Keys are never returned to the viewer. Desktop keychain and OAuth stores remain separate.
+
+A saved remote station opens even when the provider has exhausted quota, is unavailable, or has no working credential. Settings remain accessible to repair it. Boot and migration do not validate keys against a provider. Saving a newly entered key retains the existing validation flow and preserves the old key if validation fails. Custom model IDs remain selected when an endpoint's model catalog omits them.
+
 The compact Gateway control stays neutral while connected. Reconnection, an expired session or pending decisions adds a visible text label. The panel keeps approval controls stable during polling, disables them while disconnected and distinguishes last-known activity from a live snapshot. Expired sessions require an explicit reload; copy unsent text first. The Mac application menu exposes the same panel with Command-comma, including from the start screen.
 
 Every remote run and goal command requires a unique request ID, claimed durably before execution. Retrying an accepted ID returns a refusal and never starts another run. Closing a response stream detaches its viewer; explicit cancellation still aborts its server run. Bounded backpressure disconnects a stalled viewer without accumulating unlimited output.
@@ -34,18 +38,19 @@ The LevServer model key allows the gateway's subscription models and preserves a
 | Linux active release | `/opt/starnet/current` |
 | Runtime data | `/srv/private/starnet/workspaces/` |
 | Server-held model key | `/srv/private/starnet/provider.env` (root-only) |
+| Remote provider settings | `/srv/private/starnet/workspaces/.secrets/remote-providers.json` (starnet-only) |
 | systemd service | `starnet-remote.service` |
 | Linux gateway / runtime | `127.0.0.1:18791` / `127.0.0.1:18792` |
 | Mac viewer | `http://127.0.0.1:8790` |
 
-Use `ssh lev-server-direct starnet status` for service status. Use `journalctl -u starnet-remote` on the server for diagnostics. Do not print provider.env or `gh auth token` into logs. Provider key maintenance belongs to the existing Control admin interface.
+Use `ssh lev-server-direct starnet status` for service status. Use `journalctl -u starnet-remote` on the server for diagnostics. Do not print credential files or `gh auth token` into logs. Remote provider changes belong in Settings > Providers; the dedicated LevServer gateway subscription remains managed through Control.
 
 ## Upgrade and recovery
 
 1. Review and test a source revision. An archive must include `RELEASE` containing that commit ID. Keep the last installed release.
 2. Inspect the authenticated station snapshot and goal status. Stop or wait for work explicitly before a service upgrade; installation refuses to replace an active service.
 3. Stop only `starnet-remote.service`, then run the Linux installer with the same owner ID and private data path. It checks runtime readiness and unauthenticated-gateway refusal. Failure stops the new service for inspection.
-4. Rebuild the Mac app only when the connection client changes. Preserve the previous app before replacing it. The installer refuses an existing app path.
+4. Rebuild the Mac app only when the connection client changes. Back up WebKit data, preferences and connection settings first. The installer quits the app and moves the previous bundle into `work/mac-build/replaced-apps/` before replacement. Existing connection settings are retained. `Contents/Resources/SOURCE_REVISION` identifies the build.
 5. Reopen or reload the viewer after a runtime restart to obtain its new per-launch API token. Existing station data remains in the private vault.
 
 The unit requires its data mount and existing data directory; it cannot initialize a replacement station while the private vault is locked. A prior release can be selected deliberately by changing the `current` symlink while the service is stopped. Do not delete workspaces or restore an older save over newer activity as part of a code rollback. Use upstream recovery tools after inspecting the affected state.
@@ -69,3 +74,5 @@ node test/provider.registry.test.js
 ```
 
 Tests use mocked providers and temporary workspaces, on both macOS and Linux. They cover close/reopen continuity, live event replay, durable results, duplicate rejection across restart, explicit cancellation, owner authentication, origin/host refusal, session expiry, low-buffering SSE, real headless session operations, standing-goal continuation without a viewer, goal pause/restart/budgets, provider reasoning and safe cache refresh. Related upstream authentication, consent, delegation, cron, save-conflict and recovery regressions are retained.
+
+For the installed candidate, follow [the acceptance guide](TESTING.md). Current release evidence and broader upstream gate limitations are recorded in [PROJECT.md](../../PROJECT.md).

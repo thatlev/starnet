@@ -148,6 +148,8 @@ const Harness = (() => {
   // (read only there). The browser build keeps the localStorage transport unchanged.
   const TAURI = (typeof window !== 'undefined') && window.__TAURI__ && window.__TAURI__.core;
   const DESKTOP = !!TAURI;
+  const REMOTE = typeof window !== 'undefined' && !!window.__STARNET_REMOTE__;
+  const remoteProviders = Object.create(null);
   const invoke = (cmd, args) => TAURI.invoke(cmd, args);
   // DEV fast-path (sidecar started with SKYNET_DEV=1, e.g. `npm run dev:seed`): the host injects
   // window.__STARNET_DEV__ = {model, prov} and holds the API key in its own env (runtimeKey). We treat dev
@@ -230,16 +232,34 @@ const Harness = (() => {
     // BEFORE the desktop early-return on purpose: managed credits live in the SIDECAR, not the keychain, so
     // they are configured identically in a browser build and a packaged one. Probing after the return would
     // leave configured('starnet') false forever anywhere that isn't Tauri — including every dev session.
-    await refreshCreditsConfigured();
-    if (typeof window !== 'undefined' && window.__STARNET_REMOTE__) {
+    if (REMOTE) {
+      // Configuration presence is local server truth; never ask a provider about quota during boot.
       try {
-        const response = await fetch('/api/providers');
+        const response = await fetch('/api/providers', { signal: AbortSignal.timeout(5000) });
+        if (!response.ok) throw new Error('Provider settings unavailable');
         const info = await response.json();
         const rows = Array.isArray(info) ? info : (info.providers || []);
-        for (const row of rows) _configuredByProvider[row.id] = !!row.configured;
-        if (!localStorage.getItem('starnet.byok.prov') && _configuredByProvider.levserver) setProv('levserver');
-      } catch (_) {}
+        rows.forEach(rememberRemoteProvider);
+        if (info.credentialStore === 'server' && !info.storageError) {
+          await Promise.all(rows.filter(row => !['codex', 'grok', 'kimi', 'starnet'].includes(row.id)).map(async row => {
+            const key = readScoped(LS.key, row.id), baseUrl = readScoped(LS.baseUrl, row.id);
+            let keyPool = []; try { keyPool = JSON.parse(readScoped(LS.keyPool, row.id) || '[]'); } catch (_) {}
+            if (!key && !baseUrl && !keyPool.length) return;
+            try {
+              await saveRemoteProvider(row.id, { ...(key ? { key } : {}), ...(baseUrl ? { baseUrl } : {}), ...(keyPool.length ? { keyPool } : {}), migrate: true });
+              // Delete the old browser copies only after the server confirms durable storage.
+              for (const slot of [LS.key, LS.keyPool, LS.baseUrl]) {
+                localStorage.removeItem(providerSlot(slot, row.id));
+                if (row.id === 'openrouter') localStorage.removeItem(slot);
+              }
+            } catch (_) { /* retain the legacy copies so migration can retry next boot */ }
+          }));
+        }
+        if (!localStorage.getItem(LS.prov) && _configuredByProvider.levserver) setProv('levserver');
+      } catch (_) { /* a saved station remains accessible while the gateway reconnects */ }
+      return;
     }
+    await refreshCreditsConfigured();
     if (!DESKTOP) return;
     let loaded = false;
     try {
@@ -276,6 +296,24 @@ const Harness = (() => {
         if (r && r.ok) { const j = await r.json(); if (j && j.connected) _configuredByProvider[pid] = true; }
       } catch (_) {}
     }));
+  }
+  function rememberRemoteProvider(row) {
+    remoteProviders[row.id || row.provider] = row;
+    _configuredByProvider[row.id || row.provider] = !!row.configured;
+    _alternateCountByProvider[row.id || row.provider] = Number(row.alternateCount) || 0;
+  }
+  async function saveRemoteProvider(provider, patch) {
+    const response = await fetch('/api/providers/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(5000), body: JSON.stringify({ provider, ...patch }) });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.error || 'Provider configuration could not be saved.');
+    rememberRemoteProvider(result);
+    for (const [field, slot] of [['key', LS.key], ['keyPool', LS.keyPool], ['baseUrl', LS.baseUrl]]) {
+      if (!Object.prototype.hasOwnProperty.call(patch, field)) continue;
+      localStorage.removeItem(providerSlot(slot, provider));
+      if (provider === 'openrouter') localStorage.removeItem(slot);
+    }
+    return result;
   }
   // Whether this station can run on managed credits. The bearer is the linked device token the SIDECAR
   // holds — there is nothing on this side to inspect, so we ask, exactly as codex/grok/kimi do. Fail-open:
@@ -373,6 +411,7 @@ const Harness = (() => {
   //   - DEV seed: the host holds a server-side runtime credential for exactly DEV.prov (the seeded provider).
   function hasStoredCredential(provider) {
     const p = normalizeProviderId(provider);
+    if (REMOTE && remoteProviders[p] && typeof remoteProviders[p].credentialStored === 'boolean') return !!readScoped(LS.key, p) || remoteProviders[p].credentialStored;
     if (p === 'codex') return DESKTOP ? !!_configuredByProvider.codex : (getProv() === 'codex');
     // grok/kimi mirror codex: OAuth tokens live sidecar-side, so the desktop configured map (fed by the boot
     // probe + app.js's status refresh) is the only local truth; in the browser the active-provider pick stands in.
@@ -395,6 +434,7 @@ const Harness = (() => {
   const setKey = (k, provider) => {
     selectionRevision++;
     const p = normalizeProviderId(provider || getProv());
+    if (REMOTE) return saveRemoteProvider(p, { key: String(k || '').trim(), baseUrl: getBaseUrl(p) || '' });
     if (DESKTOP) {
       const on = !!(k && String(k).trim());
       // configured flips ONLY after the keychain write PROVES itself. The old optimistic pre-invoke flip meant a
@@ -414,12 +454,13 @@ const Harness = (() => {
   };
   function keyPoolSize(provider) {
     const p = normalizeProviderId(provider || getProv());
-    if (DESKTOP) return Math.max(0, Number(_alternateCountByProvider[p]) || 0);
+    if (DESKTOP || REMOTE) return Math.max(0, Number(_alternateCountByProvider[p]) || 0);
     try { return JSON.parse(readScoped(LS.keyPool, p) || '[]').length || 0; } catch (_) { return 0; }
   }
   function setKeyPool(keys, provider) {
     const p = normalizeProviderId(provider || getProv());
     const cleaned = Array.from(new Set((Array.isArray(keys) ? keys : []).map(k => String(k || '').trim()).filter(Boolean))).slice(0, 8);
+    if (REMOTE) return saveRemoteProvider(p, { keyPool: cleaned }).then(row => row.alternateCount);
     if (DESKTOP) {
       return invoke('harness_store_provider_key_pool', { provider: p, keys: cleaned })
         .then(count => { _alternateCountByProvider[p] = Math.max(0, Number(count) || 0); return count; });
@@ -467,10 +508,11 @@ const Harness = (() => {
   };
   const getProv = () => normalizeProviderId(localStorage.getItem(LS.prov) || 'openrouter');
   const setProv = p => { selectionRevision++; localStorage.setItem(LS.prov, normalizeProviderId(p || 'openrouter')); };
-  const getBaseUrl = provider => readScoped(LS.baseUrl, provider);
+  const getBaseUrl = provider => readScoped(LS.baseUrl, provider) || (REMOTE && remoteProviders[normalizeProviderId(provider)] || {}).currentBaseUrl || '';
   const setBaseUrl = (u, provider) => {
     selectionRevision++;
     const p = normalizeProviderId(provider || getProv());
+    if (REMOTE) return saveRemoteProvider(p, { baseUrl: u || '' });
     writeScoped(LS.baseUrl, p, u || '');
     if (DESKTOP) {
       return invoke('harness_store_provider_key', { provider: p, baseUrl: u || '' }).catch(() => {});
@@ -678,6 +720,7 @@ const Harness = (() => {
     if (!r.ok || !j.credentialVerified) {
       throw new Error(String(j.error || 'the provider did not verify this key') + ' — your previous key is unchanged');
     }
+    if (REMOTE) { await saveRemoteProvider(p, { key: candidate, baseUrl }); return Object.assign({}, j, { stored: true }); }
     if (baseUrlOverride != null) await Promise.resolve(setBaseUrl(baseUrl, p));
     await Promise.resolve(setKey(candidate, p));
     return Object.assign({}, j, { stored: true });

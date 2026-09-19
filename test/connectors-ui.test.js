@@ -218,8 +218,8 @@ function fakeStack(tools) {
   A.ok(/openSignIn\(/.test(station) && /window\.open\(/.test(stationCore), 'sign-in opens the provider consent in a popup (via the shared openSignIn helper)');
   A.ok(/function preserveScroll\(update\)/.test(stationCore) && /\.term-body, \.con-pane/.test(stationCore),
     'shared async connector refreshes preserve the active pane scroll position');
-  A.ok(/focus\(\{ preventScroll: true \}\)/.test(stationCore) && /setTimeout\(restore, 80\)/.test(stationCore),
-    'background pane rebuilds restore focus without stealing scroll and cover delayed async layout shifts');
+  A.ok(/focus\(\{ preventScroll: true \}\)/.test(stationCore) && !/setTimeout\(restore, 80\)/.test(stationCore),
+    'background pane rebuilds restore focus without stealing scroll and do not replay stale scroll coordinates after user input');
   A.ok(/preserveScroll\(\(\) =>/.test(station) && /preserveScroll\(\(\) =>/.test(webStation),
     'every connector build, including the mirrored web build, uses the shared preservation seam');
   A.ok(/overflow-anchor:\s*none/.test(css) && /overflow-anchor:\s*none/.test(shellCss),

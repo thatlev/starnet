@@ -58,3 +58,20 @@ test('local proxy rejects malicious origins and carries SSE immediately through 
     ac.abort();
   } finally { await close(client); await close(gateway); await close(runtime); }
 });
+
+test('gateway reuses its runtime connection without retrying requests', async () => {
+  const sockets = new Set(); let calls = 0;
+  const runtime = http.createServer((req, res) => { sockets.add(req.socket); calls++; res.end('ok'); });
+  const runtimePort = await listen(runtime);
+  const gateway = createGateway({ runtimePort, runtimeToken: 'test', ownerId: 42, verifyIdentity: async () => ({ id: 42, login: 'fixture' }) });
+  const base = 'http://127.0.0.1:' + await listen(gateway);
+  try {
+    const session = await (await fetch(base + '/remote/login', { method: 'POST', body: JSON.stringify({ githubToken: 'fixture' }) })).json();
+    for (let i = 0; i < 4; i++) {
+      const reply = await fetch(base + '/api/fixture', { method: 'POST', headers: { Authorization: 'Bearer ' + session.token }, body: '{}' });
+      assert.equal(await reply.text(), 'ok');
+    }
+    assert.equal(calls, 4, 'exactly one upstream request per caller');
+    assert.equal(sockets.size, 1, 'sequential requests reuse one TCP connection');
+  } finally { await close(gateway); await close(runtime); }
+});
