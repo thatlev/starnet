@@ -110,3 +110,18 @@ test('each server gets a stable separate browser origin while existing client st
   assert.equal(saveConnection({ ...baseConfig, host: 'other-server' }, file).port, other.port);
   assert.notEqual(saveConnection({ ...baseConfig, owner: 43 }, file).port, 8790);
 });
+
+test('setup serves the actual StarNet component styles, font and ASCII wordmark unchanged', async t => {
+  const { UI_ASSETS } = require('../remote/ui-assets');
+  const controller = new SetupController({ configFile: temp(t) });
+  const server = createSetupServer(controller); const port = await listen(server); t.after(() => close(server));
+  const base = 'http://127.0.0.1:' + port;
+  for (const file of UI_ASSETS) {
+    const response = await fetch(base + '/starnet/' + file);
+    assert.equal(response.status, 200);
+    const actual = Buffer.from(await response.arrayBuffer());
+    assert.deepEqual(actual, fs.readFileSync(path.join(__dirname, '../frontend', file)), file + ' comes directly from the shared station UI');
+  }
+  const css = await (await fetch(base + '/setup.css')).text();
+  assert.doesNotMatch(css, /font-family|@font-face|#[a-f0-9]{3,8}\b|linear-gradient|box-shadow/i, 'setup adds layout, not a competing design system');
+});

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { readJson } = require('./gateway');
+const { UI_ASSETS } = require('./ui-assets');
 const { connectionConfig, saveConnection, planConnection } = require('./config');
 const { assertFree } = require('./cli');
 const { githubUser, probeConnection } = require('./connection');
@@ -71,7 +72,8 @@ class SetupController {
 }
 function createSetupServer(controller, { port = 18790, root = __dirname } = {}) {
   const csrf = crypto.randomBytes(32).toString('hex');
-  const files = { '/': ['setup.html', 'text/html; charset=utf-8'], '/setup.js': ['setup-ui.js', 'text/javascript'], '/setup.css': ['setup.css', 'text/css'], '/font.ttf': ['assets/VT323.ttf', 'font/ttf'] };
+  const files = { '/': ['setup.html', 'text/html; charset=utf-8'], '/setup.js': ['setup-ui.js', 'text/javascript'], '/setup.css': ['setup.css', 'text/css'] };
+  for (const file of UI_ASSETS) files['/starnet/' + file] = ['../frontend/' + file, file.endsWith('.css') ? 'text/css' : file.endsWith('.woff2') ? 'font/woff2' : 'image/svg+xml'];
   const server = http.createServer(async (req, res) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
     const send = (code, data) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };

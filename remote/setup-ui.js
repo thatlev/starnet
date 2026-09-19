@@ -2,7 +2,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const token = document.querySelector('meta[name=setup-token]').content;
-  let initialized = false, polling = false, current = null, lastMessage = null;
+  let initialized = false, polling = false, current = null, lastMessage = null, mode = 'existing';
   const input = () => ({ host: $('host').value.trim(), 'ssh-port': $('ssh-port').value, 'gateway-port': $('gateway-port').value });
   function invalidate() { $('open').hidden = true; $('test').hidden = false; }
   function render(state) {
@@ -11,14 +11,14 @@
       initialized = true;
       if (state.config) { $('host').value = state.config.host; $('ssh-port').value = state.config['ssh-port'] || ''; $('gateway-port').value = state.config['gateway-port']; }
     }
-    $('identity').textContent = state.user ? 'Signed in as ' + state.user.login : 'Use GitHub to verify station ownership.';
-    $('login').textContent = state.user ? 'Use another GitHub account ↗' : 'Sign in with GitHub ↗';
+    $('identity').textContent = state.user ? 'Signed in as ' + state.user.login : 'Sign in with the GitHub account that owns this station.';
+    $('login').textContent = state.user ? '↻ SWITCH GITHUB ACCOUNT' : '⏼ SIGN IN WITH GITHUB ↗';
     $('return').hidden = !state.config;
     const messageKey = state.phase + ':' + state.message;
     if (messageKey !== lastMessage) { $('status').textContent = state.message; $('status').dataset.phase = state.phase; lastMessage = messageKey; }
     $('cancel').hidden = !state.busy;
-    for (const id of ['login', 'profile', 'test', 'ssh', 'install', 'host', 'ssh-port', 'gateway-port']) $(id).disabled = state.busy || (id === 'install' && !state.installerAvailable) || (id === 'gateway-port' && document.querySelector('input[name=mode]:checked').value === 'new');
-    document.querySelectorAll('input[name=mode]').forEach(el => el.disabled = state.busy);
+    for (const id of ['login', 'profile', 'test', 'ssh', 'install', 'host', 'ssh-port', 'gateway-port']) $(id).disabled = state.busy || (id === 'install' && !state.installerAvailable) || (id === 'gateway-port' && mode === 'new');
+    document.querySelectorAll('[data-mode]').forEach(el => el.disabled = state.busy);
     $('return').disabled = state.busy;
     const canOpen = !state.busy && state.phase === 'connected' && state.config && JSON.stringify(input()) === JSON.stringify({ host: state.config.host, 'ssh-port': String(state.config['ssh-port'] || ''), 'gateway-port': String(state.config['gateway-port']) });
     $('test').hidden = !!canOpen; $('open').hidden = !canOpen;
@@ -47,7 +47,16 @@
   $('install').onclick = () => { if ($('connection').reportValidity()) action('install', input()); };
   $('open').onclick = openStation; $('return').onclick = openStation;
   for (const id of ['host', 'ssh-port', 'gateway-port']) $(id).addEventListener('input', invalidate);
-  document.querySelectorAll('input[name=mode]').forEach(el => el.onchange = () => { $('install-panel').hidden = el.value !== 'new'; if (el.value === 'new') $('gateway-port').value = '18791'; $('gateway-port').disabled = el.value === 'new'; invalidate(); });
+  document.querySelectorAll('[data-mode]').forEach(el => el.onclick = () => {
+    mode = el.dataset.mode;
+    document.querySelectorAll('[data-mode]').forEach(button => {
+      button.classList.toggle('sel', button.dataset.mode === mode);
+      button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
+    });
+    $('install-panel').hidden = mode !== 'new';
+    if (mode === 'new') $('gateway-port').value = '18791';
+    $('gateway-port').disabled = mode === 'new'; invalidate();
+  });
   async function poll() {
     if (polling) return; polling = true;
     try { await request('status'); } catch (_) { $('status').textContent = 'The connection helper stopped. Reopen StarNet to reconnect.'; }

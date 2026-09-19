@@ -23,6 +23,8 @@ Upstream history, MIT license and notices are retained.
 - [x] Provide a reproducible server installation and desktop packaging path suitable for upstream review, without depending on Lev's host/account.
 - [ ] Verify setup, cancellation, authentication and reconnect behavior; rebuild and provide acceptance steps. Official upstream PR still waits for acceptance.
 
+The setup screen uses StarNet’s actual shared stylesheets, components, local VT323 font and ASCII wordmark, with layout-only setup CSS. The earlier independent setup styling was superseded by Lev’s request to reuse the actual UI.
+
 The setup helper is isolated from remote station HTML by a separate loopback origin and CSRF token. Connection checks authenticate ownership and exercise the runtime/SSE without inference; failures and cancellation preserve the prior configuration. Distinct server/account connections keep separate browser origins. The Mac package includes verified Node/GitHub CLI binaries and a reviewed Linux installer payload; no personal host or account is seeded. See [setup and distribution](docs/remote/SETUP.md).
 
 | Before | After | Why |

@@ -38,7 +38,7 @@ The build includes pinned Node and GitHub CLI binaries verified against their of
 
 `Contents/Resources/BUILD.json` records the runtime versions, architecture and server archive checksum. `SOURCE_REVISION` records the reviewed source revision. `remote/package.mjs` stages reproducible inputs under `work/remote-package/`; it refuses bundled workspace state. Stage new source files before a candidate build; release builds should use a clean committed checkout.
 
-The current script makes an ad-hoc signed developer candidate. Public distribution still requires the maintainer's Developer ID signing/notarization and release upload. No public download is claimed to exist before that release is published. The standalone viewer avoids exposing the local desktop's privileged IPC bridge to remote HTML.
+The current script makes an ad-hoc signed developer candidate. Public distribution still requires the maintainer's Developer ID signing/notarization and release upload. No public download is claimed to exist before that release is published. Setup uses the station’s actual component styles, local VT323 font and ASCII wordmark. These assets are copied byte-for-byte from `frontend/`; `setup.css` only arranges the connection fields. The standalone viewer avoids exposing the local desktop's privileged IPC bridge to remote HTML.
 
 ## Design reference
 

@@ -43,6 +43,7 @@ chown -R root:root "$release"
 chmod -R go-w "$release"
 ln -s "$release" /opt/starnet/current.new
 mv -Tf /opt/starnet/current.new /opt/starnet/current
+install -d -m 0755 /etc/systemd/system /usr/local/bin
 cat > /etc/systemd/system/starnet-remote.service <<EOF
 [Unit]
 Description=StarNet headless agent station and private gateway

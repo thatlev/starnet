@@ -1,16 +1,100 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="setup-token" content="__SETUP_TOKEN__"><title>Connect your station · StarNet</title><link rel="stylesheet" href="/setup.css"><script defer src="/setup.js"></script></head>
-<body>
-<header><a class="wordmark" href="/" aria-label="StarNet connection setup">STAR<span>NET</span></a><span class="eyebrow">REMOTE STATION</span><button id="return" class="quiet" hidden>Return to station ↗</button></header>
-<main>
-<section class="intro"><p class="eyebrow">YOUR STATION. ALWAYS ON.</p><h1>One station.<br>Wherever you are.</h1><p>Your agent lives on your server. This Mac is your window into it — close the app and work continues.</p><div class="route" aria-label="This Mac connects securely to your server"><span>THIS MAC<small>View &amp; control</small></span><span aria-hidden="true">···· SSH ····</span><span>YOUR SERVER<small>Agent, keys &amp; files</small></span></div><p class="local-note">Want your agent to run on this Mac instead? Use the <a href="https://github.com/androoAGI/starnet/releases">standard StarNet desktop app ↗</a>.</p></section>
-<section class="setup" aria-labelledby="setup-title"><h2 id="setup-title">Connect your station</h2><p class="muted">A few details now. One click next time.</p>
-<fieldset id="choice"><legend><span class="step">01</span> Start with your server</legend><div class="choices"><label class="choice"><input type="radio" name="mode" value="existing" checked><strong>Already installed</strong><span>Connect to a running StarNet gateway.</span></label><label class="choice"><input type="radio" name="mode" value="new"><strong>Set up a new server</strong><span>Install StarNet on a Linux machine.</span></label></div></fieldset>
-<section class="account" aria-labelledby="account-title"><h3 id="account-title"><span class="step">02</span> Confirm it’s you</h3><p id="identity">Use GitHub to verify station ownership.</p><div class="actions"><button id="login" class="secondary">Sign in with GitHub ↗</button><button id="profile" class="quiet">Check sign-in</button></div><p class="fine">You sign in on this Mac. The server verifies your GitHub account. Provider API keys are configured in your station after connecting.</p></section>
-<form id="connection"><h3><span class="step">03</span> Find your station</h3><label for="host">SSH address</label><input id="host" name="host" placeholder="you@server.example.com or SSH alias" autocomplete="off" autocapitalize="none" spellcheck="false" required maxlength="318" aria-describedby="host-help"><p id="host-help" class="fine">Use the same address as your SSH client. Existing SSH keys and aliases work here.</p><details><summary>Connection options</summary><div class="ports"><label>SSH port<input id="ssh-port" type="number" min="1" max="65535" placeholder="From SSH config (usually 22)"></label><label>Gateway port<input id="gateway-port" type="number" min="1024" max="65535" value="18791"></label></div></details><button id="ssh" type="button" class="quiet">Set up SSH access in Terminal ↗</button>
-<div id="install-panel" hidden><h4>Install once. Keep running.</h4><p>Use a Linux server with systemd, SSH access and an administrator account. The included installer creates a private StarNet service and keeps its ports off the public network.</p><p class="fine">Creates /opt/starnet and /var/lib/starnet. It refuses to replace a running station. Your server stays on when this Mac sleeps.</p><button id="install" type="button" class="secondary">Open server installer in Terminal ↗</button><p class="fine">Review the command and enter your server’s sudo password there. Then return here to test the connection.</p></div>
-<div id="status" role="status" aria-live="polite" aria-atomic="true"></div><div class="actions final"><button id="test" type="submit" class="primary">Test &amp; save connection →</button><button id="cancel" type="button" class="quiet" hidden>Cancel</button><button id="open" type="button" class="primary" hidden>Open your station →</button></div><p id="saved-note" class="fine">Settings are saved only after SSH, ownership and live updates pass.</p>
-</form></section>
-</main><footer>PRIVATE CONNECTION <span>·</span> SERVER-OWNED STATE <span>·</span> NO LOCAL AGENT REQUIRED</footer>
-</body></html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="setup-token" content="__SETUP_TOKEN__">
+  <title>Connect your station · StarNet</title>
+  <link rel="preload" href="/starnet/assets/fonts/vt323.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/starnet/css/style.css">
+  <link rel="stylesheet" href="/starnet/css/app.css">
+  <link rel="stylesheet" href="/starnet/css/motion.css">
+  <link rel="stylesheet" href="/starnet/css/interface.css">
+  <link rel="stylesheet" href="/starnet/css/glass-demo.css">
+  <link rel="stylesheet" href="/starnet/css/readability.css">
+  <link rel="stylesheet" href="/setup.css">
+  <script defer src="/setup.js"></script>
+</head>
+<body class="theme-amber glass-demo no-flicker">
+<section id="screen-remote-setup" class="screen active" aria-labelledby="setup-title">
+  <div class="panel connect-panel setup-console">
+    <span class="cc-bracket cc-tl" aria-hidden="true">┌</span><span class="cc-bracket cc-tr" aria-hidden="true">┐</span>
+    <span class="cc-bracket cc-bl" aria-hidden="true">└</span><span class="cc-bracket cc-br" aria-hidden="true">┘</span>
+    <header class="cc-console-head">
+      <div class="cc-titlebar">
+        <span class="logo-img" role="img" aria-label="StarNet"></span>
+        <span class="cc-tb-rule"></span><span class="cc-tb-mode">REMOTE UPLINK</span>
+        <button id="return" type="button" class="btn-sm" hidden>‹ RETURN TO STATION</button>
+      </div>
+      <div class="ov-title-row"><h2 id="setup-title">CONNECT YOUR STATION</h2></div>
+      <p class="ov-sub">Your agent runs on your server. Close this app and its work continues.</p>
+    </header>
+
+    <form id="connection" class="setup-body">
+      <div class="ov-cfg">
+        <div class="ov-field">
+          <h3 class="ov-step" id="choice-label"><b>01</b> YOUR SERVER</h3>
+          <div id="choice" class="ov-cards ov-approve" role="group" aria-labelledby="choice-label">
+            <button type="button" class="ov-card sel" data-mode="existing" aria-pressed="true">
+              <span class="ov-card-ic" aria-hidden="true">⌁</span><span class="ov-card-nm">ALREADY INSTALLED</span>
+              <span class="hint">Connect to your running StarNet gateway.</span><span class="ov-card-pick" aria-hidden="true">✓</span>
+            </button>
+            <button type="button" class="ov-card" data-mode="new" aria-pressed="false">
+              <span class="ov-card-ic" aria-hidden="true">＋</span><span class="ov-card-nm">NEW SERVER</span>
+              <span class="hint">Install StarNet on a Linux machine.</span><span class="ov-card-pick" aria-hidden="true">✓</span>
+            </button>
+          </div>
+        </div>
+        <section class="ov-field" aria-labelledby="account-title">
+          <h3 class="ov-step" id="account-title"><b>02</b> STATION OWNER</h3>
+          <div class="codex-signin">
+            <p id="identity" class="codex-status">Sign in with the GitHub account that owns this station.</p>
+            <div class="codex-actions">
+              <button id="login" type="button" class="btn">⏼ SIGN IN WITH GITHUB ↗</button>
+              <button id="profile" type="button" class="btn-sm">↻ CHECK SIGN-IN</button>
+            </div>
+            <p class="hint">You sign in on this Mac. The server verifies your account. Add model provider keys inside your station after connecting.</p>
+          </div>
+        </section>
+        <div class="ov-field">
+          <p class="cc-actions-ascii">THIS MAC ── SSH ──▶ YOUR SERVER</p>
+          <p class="hint">View &amp; control here. Agent, keys &amp; files there.</p>
+          <p class="hint">Run locally instead: <a class="connect-link" href="https://github.com/androoAGI/starnet/releases">standard StarNet desktop app ↗</a></p>
+        </div>
+      </div>
+
+      <div class="ov-cfg">
+        <h3 class="ov-step"><b>03</b> CONNECT</h3>
+        <div class="ov-field">
+          <label for="host">SSH ADDRESS</label>
+          <input id="host" name="host" placeholder="you@server.example.com or SSH alias" autocomplete="off" autocapitalize="none" spellcheck="false" required maxlength="318" aria-describedby="host-help">
+          <p id="host-help" class="hint">Use the address from your SSH client. Existing keys and aliases work here.</p>
+        </div>
+        <details class="ov-field">
+          <summary>CONNECTION OPTIONS</summary>
+          <div class="setup-ports">
+            <label>SSH PORT<input id="ssh-port" type="number" min="1" max="65535" placeholder="SSH config (usually 22)"></label>
+            <label>GATEWAY PORT<input id="gateway-port" type="number" min="1024" max="65535" value="18791"></label>
+          </div>
+        </details>
+        <button id="ssh" type="button" class="btn-sm">⌁ SET UP SSH ACCESS IN TERMINAL ↗</button>
+        <section id="install-panel" class="codex-signin" hidden>
+          <h4 class="ov-step">INSTALL ON YOUR SERVER</h4>
+          <p class="hint">Linux x86_64 or arm64 · systemd · SSH · root/sudo access.</p>
+          <p class="hint">The included installer creates /opt/starnet and /var/lib/starnet, with a private service. It refuses to replace a running station. No Node installation is needed.</p>
+          <button id="install" type="button" class="btn">＋ OPEN SERVER INSTALLER ↗</button>
+          <p class="hint">Terminal shows progress and asks for sudo when needed. Return here when it finishes, then test the connection.</p>
+        </section>
+      </div>
+    </form>
+
+    <footer class="connect-actions setup-footer">
+      <div class="setup-receipt"><p id="status" class="hint" role="status" aria-live="polite" aria-atomic="true"></p><p id="saved-note" class="hint">Saved only after SSH, ownership and live updates pass.</p></div>
+      <button id="cancel" type="button" class="btn" hidden>CANCEL</button>
+      <button id="test" type="submit" form="connection" class="btn-xl">TEST &amp; SAVE ▸</button>
+      <button id="open" type="button" class="btn-xl" hidden>OPEN STATION ▸</button>
+    </footer>
+  </div>
+</section>
+</body>
+</html>
