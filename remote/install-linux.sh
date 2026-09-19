@@ -40,7 +40,10 @@ else
   npm ci --prefix "$release/remote" --omit=dev --ignore-scripts --no-fund
 fi
 chown -R root:root "$release"
-chmod -R go-w "$release"
+# Archives may be built under a private umask. The service account must be
+# able to traverse/read this immutable code and execute its bundled runtime.
+# Private station data is outside the release and keeps its restrictive mode.
+chmod -R a+rX,go-w "$release"
 ln -s "$release" /opt/starnet/current.new
 mv -Tf /opt/starnet/current.new /opt/starnet/current
 install -d -m 0755 /etc/systemd/system /usr/local/bin
