@@ -221,8 +221,12 @@ const WorldModel = (() => {
     slotted:  { label: 'SLOTTED',  pitch: [3, 2], suggest: 'corridor' },
     terrazzo: { label: 'TERRAZZO', pitch: [4, 4], suggest: 'hull' },
     octile:   { label: 'OCTILE',   pitch: [2, 2], suggest: 'sterile' },
+    flightdeck: { label: 'FLIGHT DECK', pitch: [2, 2], suggest: 'hull' },
+    lunar: { label: 'LUNAR', pitch: [4, 2], suggest: 'sterile' },
+    maggrid: { label: 'MAG GRID', pitch: [2, 2], suggest: 'corridor' },
+    habitat: { label: 'HABITAT', pitch: [2, 2], suggest: 'corridor' },
   };
-  const MAT_ORDER = ['spine', 'alloy', 'runner', 'treadway', 'meshway', 'plate', 'diamond', 'cargo', 'panel', 'tile', 'ceramic', 'resin', 'tread', 'soft', 'grate', 'hex', 'plank', 'turf', 'basalt', 'parquet', 'rubber', 'slotted', 'terrazzo', 'octile'];
+  const MAT_ORDER = ['spine', 'alloy', 'runner', 'treadway', 'meshway', 'plate', 'diamond', 'cargo', 'panel', 'tile', 'ceramic', 'resin', 'tread', 'soft', 'grate', 'hex', 'plank', 'turf', 'basalt', 'parquet', 'rubber', 'slotted', 'terrazzo', 'octile', 'flightdeck', 'lunar', 'maggrid', 'habitat'];
 
   /* the WALL material catalog — the deck's opposite number. Walls carry the same two axes as the
      floor (hue × recipe) and read from the same FLOOR_STYLES hue catalog, because a room should be
@@ -244,8 +248,12 @@ const WorldModel = (() => {
     pipework: { label: 'PIPEWORK', suggest: null },
     wainscot: { label: 'WAINSCOT', suggest: 'walnut' },
     hedge:    { label: 'HEDGE',    suggest: 'fern' },
+    pressure: { label: 'PRESSURE', suggest: 'bone' },
+    radiator: { label: 'RADIATOR', suggest: 'hull' },
+    utility: { label: 'UTILITY', suggest: 'cobalt' },
+    acoustic: { label: 'PADDED', suggest: 'ash' },
   };
-  const WALL_ORDER = ['bulkhead', 'courses', 'service', 'plating', 'ribbed', 'panelled', 'viewport', 'pipework', 'wainscot', 'hedge'];
+  const WALL_ORDER = ['bulkhead', 'courses', 'service', 'plating', 'ribbed', 'panelled', 'viewport', 'pipework', 'wainscot', 'hedge', 'pressure', 'radiator', 'utility', 'acoustic'];
 
   /* the HULL material catalog — THE THIRD SURFACE AXIS (2026-08-05, Andrew, circling the outside
      edges of five rooms in a screenshot: "the outer walls are not customizable... for users who
@@ -274,13 +282,18 @@ const WorldModel = (() => {
     timber:    { label: 'TIMBER',    suggest: 'walnut', blurb: 'stacked log courses — the cabin' },
     clapboard: { label: 'CLAPBOARD', suggest: 'ash',    blurb: 'lapped siding boards — the farmhouse' },
     shingle:   { label: 'SHINGLE',   suggest: 'oak',    blurb: 'overlapping shingles — a pitched roof from above' },
-    brick:     { label: 'BRICK',     suggest: 'rust',   blurb: 'staggered courses + mortar — the townhouse' },
+    brick:     { label: 'BRICK',     suggest: 'ember',  blurb: 'narrow fired-clay masonry with dark recessed mortar' },
     stone:     { label: 'STONE',     suggest: 'ash',    blurb: 'irregular rubble masonry — the cottage' },
     stucco:    { label: 'STUCCO',    suggest: 'amber',  blurb: 'rendered plaster + corner quoins — adobe' },
     curtain:   { label: 'CURTAIN',   suggest: 'indigo', blurb: 'glass curtain wall + mullions — the tower' },
     hedge:     { label: 'HEDGE',     suggest: 'fern',   blurb: 'clipped hedge — the garden wall' },
   };
-  const HULL_ORDER = ['station', 'monocoque', 'timber', 'clapboard', 'shingle', 'brick', 'stone', 'stucco', 'curtain', 'hedge'];
+  Object.assign(HULL_MATERIALS, {
+    thermal: { label: 'THERMAL', suggest: 'hull', blurb: 'dark carbon thermal shielding with interlocking armor panels' },
+    insulation: { label: 'INSULATION', suggest: 'amber', blurb: 'quilted orbital insulation with restrained foil folds' },
+    heatsink: { label: 'HEATSINK', suggest: 'hull', blurb: 'radiator fins between calm graphite cladding panels' }
+  });
+  const HULL_ORDER = ['station', 'monocoque', 'timber', 'clapboard', 'shingle', 'brick', 'stone', 'stucco', 'curtain', 'hedge', 'thermal', 'insulation', 'heatsink'];
 
   /* room categories — a capability-zone label + a default floor (hue + material). kind drives
      nothing behavioural yet (capability mapping is a later pass); it tags the zone + seeds the
@@ -1746,6 +1759,37 @@ const WorldModel = (() => {
       return { ok: true };
     }
 
+    // Whole-layout changes use the same single-step history and invalidation as
+    // ordinary REFIT edits. Assemble and validate before touching the live doc.
+    function replaceLayout(layout) {
+      if (!layout || layout.schema !== 'starnet.station' || !Array.isArray(layout.props) || !layout.rooms) return fail('BAD_LAYOUT');
+      const candidate = migrate(clone(layout));
+      if (!candidate.order.length || new Set(candidate.props.map(p => p.id)).size !== candidate.props.length) return fail('BAD_LAYOUT');
+      const probe = makeStation(clone(candidate));
+      for (const rid of candidate.order) {
+        const room = candidate.rooms[rid];
+        if (!room.rects.length || room.rects.some(r => ![r.x1,r.y1,r.x2,r.y2].every(Number.isFinite))) return fail('BAD_LAYOUT');
+        const placed = probe.canPlaceRoom(room.rects, room.kind, rid);
+        if (!placed.ok) return placed;
+      }
+      for (const p of candidate.props) {
+        const placed = probe.canPlaceProp(p.t,p.x,p.y,p.w,p.h,p.id);
+        if (!placed.ok) return placed;
+      }
+      const next = makeStation(candidate);
+      const owners = [...new Set(doc.props.filter(p => p.agentId).map(p => p.agentId))];
+      for (const aid of owners) {
+        const placed = next.ensureWorkstation(aid);
+        if (!placed.ok) return placed;
+      }
+      const prepared = next.serialize();
+      prepared.meta.createdAt = doc.meta.createdAt;
+      snapshot();
+      restore(prepared);
+      emit([], {global:true});
+      return {ok:true};
+    }
+
     function undo() {
       if (!undoStack.length) return fail('NOTHING', 'nothing to undo');
       redoStack.push(snap());
@@ -1764,7 +1808,7 @@ const WorldModel = (() => {
     const canRedo = () => redoStack.length > 0;
 
     /* ---------- projection → the v7 MAP-shaped geometry the bake consumes ---------- */
-    function projectGeometry() {
+    function projectGeometry(walls = {}) {
       const b = bounds();
       const ox = b.minTx - MARGIN, oy = b.minTy - MARGIN;       // world → local offset
       const COLS = (b.maxTx - b.minTx) + 1 + MARGIN * 2;
@@ -1928,8 +1972,68 @@ const WorldModel = (() => {
       // Validate both the logical tile-centre route and the rendered foot route.
       // world.js footOf uses (x + .5, y + 1 - 1/TILE), so a centre-only
       // shortcut can cross a wall beside a doorway even when its BFS is legal.
-      function segmentClear(ax, ay, bx, by, extra) {
+      // The visible wall face occupies part of an otherwise walkable edge tile.
+      // A foot may enter through an open north doorway, but may only turn beside
+      // it after clearing the 9px wall face (5px in corridors). Keep this finer
+      // clearance separate from floor occupancy so existing narrow halls survive.
+      const wallClearance = new Uint8Array(COLS * ROWS);
+      for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
+        if(zoneGrid[idx(x,y)]==null)continue;
+        wallClearance[idx(x,y)]=(!canStep(x,y,x,y-1)?1:0)|(!canStep(x,y,x-1,y)?2:0)|(!canStep(x,y,x+1,y)?4:0);
+      }
+      // The raised doorway returns occupy the corridor ABOVE the room seam.
+      // Keep a sprite-width lane through that silhouette, not just a legal foot
+      // tile. In a two-tile hall the anchors move inward; no floor tile is removed.
+      const mouthLanes = [];
+      const wallUp = Number.isFinite(walls.up) ? Math.max(0, Math.round(walls.up)) : 30;
+      const capH = Number.isFinite(walls.capH) ? Math.max(2, Math.round(walls.capH)) : 4;
+      const at = (x,y) => x<0||y<0||x>=COLS||y>=ROWS ? null : zoneGrid[idx(x,y)];
+      const seam = (x,y) => {
+        const a=at(x,y-1),b=at(x,y);
+        return a===b ? 0 : a==null||b==null ? 2 : canStep(x,y-1,x,y) ? 1 : 2;
+      };
+      if (wallUp >= 4) for(let y=1;y<ROWS;y++) for(let x=0;x<COLS;x++) {
+        if(seam(x,y)!==1)continue;
+        let end=x;while(end+1<COLS&&seam(end+1,y)===1)end++;
+        let left=0,right=0;
+        for(let c=x-1;c>=0&&seam(c,y)===2;c--)left++;
+        for(let c=end+1;c<COLS&&seam(c,y)===2;c++)right++;
+        // Same architectural doorway rule as StationBake.classifyJoins.
+        if(left&&right&&end-x+1<left+right)for(let a=x;a<=end;a++) {
+          const room=at(a,y);
+          if(isCorridor(room)||!isCorridor(at(a,y-1)))continue;
+          let b=a;while(b<end&&at(b+1,y)===room&&isCorridor(at(b+1,y-1)))b++;
+          const x0=a*TILE,x1=(b+1)*TILE;
+          const reach=Math.min(6,Math.max(1,Math.floor((x1-x0-8)/2)));
+          const inset=Math.min((x1-x0)/2-.5,reach+1+4.5);
+          mouthLanes.push({x0,x1,top:y*TILE-wallUp-capH,bottom:y*TILE+10,left:x0+inset,right:x1-inset});
+          a=b;
+        }
+        x=end;
+      }
+      function footPoint(x,y) {
+        let px=x*TILE+TILE/2;const py=y*TILE+TILE-1;
+        for(const m of mouthLanes)if(px>=m.x0&&px<m.x1&&py>=m.top-TILE&&py<=m.bottom+TILE)
+          px=Math.max(m.left,Math.min(m.right,px));
+        return {x:px,y:py};
+      }
+      function clearMouths(ax,ay,bx,by) {
+        for(const m of mouthLanes) {
+          let lo=0,hi=1;
+          const dy=by-ay;
+          if(Math.abs(dy)<1e-10){if(ay<m.top||ay>m.bottom)continue;}
+          else {const a=(m.top-ay)/dy,b=(m.bottom-ay)/dy;lo=Math.max(0,Math.min(a,b));hi=Math.min(1,Math.max(a,b));if(lo>hi)continue;}
+          const a=ax+(bx-ax)*lo,b=ax+(bx-ax)*hi;
+          // Only this opening owns the interval. Its shoulders are already
+          // rejected by the tile/face checks below.
+          if(Math.max(a,b)<m.x0||Math.min(a,b)>m.x1)continue;
+          if(Math.min(a,b)<m.left-1e-8||Math.max(a,b)>m.right+1e-8)return false;
+        }
+        return true;
+      }
+      function segmentClear(ax, ay, bx, by, extra, physical = false) {
         if (![ax, ay, bx, by].every(Number.isFinite)) return false;
+        if (physical && !clearMouths(ax*TILE, ay*TILE, bx*TILE, by*TILE)) return false;
         const x0 = Math.floor(ax), y0 = Math.floor(ay), x1 = Math.floor(bx), y1 = Math.floor(by);
         let x = x0, y = y0;
         const dx = Math.abs(bx - ax), dy = Math.abs(by - ay);
@@ -1937,9 +2041,22 @@ const WorldModel = (() => {
         const stepX = dx ? 1 / dx : Infinity, stepY = dy ? 1 / dy : Infinity;
         let nextX = dx ? (xi > 0 ? x + 1 - ax : ax - x) / dx : Infinity;
         let nextY = dy ? (yi > 0 ? y + 1 - ay : ay - y) / dy : Infinity;
+        let entered=0;
+        const clearFace=(x,y,from,to)=>{
+          if(!physical)return true;
+          const flags=wallClearance[idx(x,y)];if(!flags)return true;
+          const cor=isCorridor(zoneGrid[idx(x,y)]),side=((cor?2:4)+.5)/TILE,north=((cor?5:9)+.5)/TILE;
+          const xa=ax+(bx-ax)*from-x,xb=ax+(bx-ax)*to-x,ya=ay+(by-ay)*from-y,yb=ay+(by-ay)*to-y;
+          return (!(flags&1)||Math.min(ya,yb)>=north-1e-8)
+            && (!(flags&2)||Math.min(xa,xb)>=side-1e-8)
+            && (!(flags&4)||Math.max(xa,xb)<=1-side+1e-8);
+        };
         let guard = Math.abs(x1 - x0) + Math.abs(y1 - y0) + 1;
         while ((x !== x1 || y !== y1) && guard-- > 0) {
           if (!walkable(x, y, extra)) return false;
+          const leaving=Math.min(1,nextX,nextY);
+          if(!clearFace(x,y,entered,leaving))return false;
+          entered=leaving;
           if (nextX < nextY - 1e-10) {
             if (!walkable(x + xi, y, extra) || !canStep(x, y, x + xi, y)) return false;
             x += xi; nextX += stepX;
@@ -1954,15 +2071,15 @@ const WorldModel = (() => {
             x += xi; y += yi; nextX += stepX; nextY += stepY;
           }
         }
-        return guard > 0 && walkable(x1, y1, extra);
+        return guard > 0 && walkable(x1, y1, extra) && clearFace(x1,y1,entered,1);
       }
       function losClear(x0, y0, x1, y1, extra) {
-        const fy = 1 - 1 / TILE;
+        const a=footPoint(x0,y0),b=footPoint(x1,y1);
         return segmentClear(x0 + .5, y0 + .5, x1 + .5, y1 + .5, extra)
-          && segmentClear(x0 + .5, y0 + fy, x1 + .5, y1 + fy, extra);
+          && segmentClear(a.x/TILE,a.y/TILE,b.x/TILE,b.y/TILE,extra,true);
       }
       // Pixel-space companion for actual starts, corner lookahead and body nudges.
-      const clearFootSegment = (ax, ay, bx, by, extra) => segmentClear(ax / TILE, ay / TILE, bx / TILE, by / TILE, extra);
+      const clearFootSegment = (ax, ay, bx, by, extra) => segmentClear(ax / TILE, ay / TILE, bx / TILE, by / TILE, extra, true);
       function smoothPath(pts, sx, sy, extra) {
         if (!pts || pts.length < 3) return pts;
         const out = [];
@@ -1994,6 +2111,8 @@ const WorldModel = (() => {
             if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
             const ni = idx(nx, ny);
             if (prev[ni] !== -1 || !walkable(nx, ny, extra) || !canStep(cx, cy, nx, ny)) continue;
+            const a=footPoint(cx,cy),b=footPoint(nx,ny);
+            if(!clearFootSegment(a.x,a.y,b.x,b.y,extra))continue;
             prev[ni] = cur; q.push(ni);
           }
         }
@@ -2008,7 +2127,7 @@ const WorldModel = (() => {
         TILE, COLS, ROWS, W: COLS * TILE, H: ROWS * TILE + HULL_PAD,
         origin: { tx: ox, ty: oy },
         allRects, zones, ROOM_IDS, isCorridor, chamfers, windows: [], props: propsLocal, belts: beltsLocal,
-        doorDefs, zoneGrid, idx, canStep, baseColorOf, walkable, path, clearFootSegment, blockedTiles,
+        doorDefs, zoneGrid, idx, canStep, baseColorOf, walkable, path, clearFootSegment, footPoint, blockedTiles,
         nameOf: id => (doc.rooms[id] ? doc.rooms[id].name : ''),
         kindOf: id => (doc.rooms[id] ? doc.rooms[id].kind : null),
         matOf: id => matOfRoom(doc.rooms[id]),   // effective deck material (override, else kind default)
@@ -2336,7 +2455,7 @@ const WorldModel = (() => {
       // agent-bay binding queries
       propsByType, propsByAgent, pipelineEdges, setPipelineEdges, addPipelineEdge, removePipelineEdge, agentRoomId, bayObjects,
       capForProp: t => CAP_PROP_MAP[t] || null,   // a prop type's capability objectType (single source for the UI)
-      undo, redo, canUndo, canRedo,
+      undo, redo, canUndo, canRedo, replaceLayout,
       // projection + io
       projectGeometry, serialize, onChange,
     };
@@ -2386,6 +2505,15 @@ const WorldModel = (() => {
     if (propRules) doc.props = doc.props.filter(p => !(p && typeof p.t === 'string') || !!propRules(p.t));
     doc.props = doc.props.filter(p => p && typeof p === 'object' && typeof p.t === 'string')
       .map(p => { const o = { id: p.id || null, t: p.t, x: p.x | 0, y: p.y | 0, w: Math.max(1, p.w | 0 || 1), h: Math.max(1, p.h | 0 || 1) }; if (p.block === false && !LEGACY_WALKABLE_DOCKS[p.t]) o.block = false; if (typeof p.agentId === 'string' && p.agentId) o.agentId = p.agentId; const r0 = cleanRot(p.r); if (r0) o.r = r0; if (p.m) o.m = 1; if (typeof p.role === 'string' && p.role) o.role = p.role.slice(0, 24); if (typeof p.brief === 'string' && p.brief.trim()) o.brief = p.brief.slice(0, 2000); if (typeof p.label === 'string' && p.label.trim()) o.label = p.label.slice(0, 48); if (p.t === 'intake' && p.limits && typeof p.limits === 'object') { const nl = normalizeLimits(p.limits); if (nl) o.limits = { maxHops: nl.maxHops, maxUsdPerMessage: nl.maxUsdPerMessage, maxUsdPerDay: nl.maxUsdPerDay }; } applyJunctionCfg(o, p); if (cleanDoor(p.door)) o.door = p.door; if (typeof p.connectorId === 'string' && p.connectorId.trim()) o.connectorId = p.connectorId.trim(); return o; });
+    // Explicit, pack-owned shrinking only. Keep the rendered centre and floor line;
+    // never enlarge obstacles or reinterpret a custom saved size. Idempotent on reload.
+    for (const p of doc.props) {
+      const m = propRules && propRules(p.t)?.footprintMigration;
+        if (!m || !m.from || !m.to || (p.r|0) !== 0 || p.w !== m.from.w || p.h !== m.from.h) continue;
+      if (![m.to.w,m.to.h,m.dx,m.dy].every(Number.isInteger) || m.to.w<1 || m.to.h<1 ||
+          m.dx<0 || m.dy<0 || m.dx+m.to.w>p.w || m.dy+m.to.h>p.h) continue;
+      p.x+=m.dx;p.y+=m.dy;p.w=m.to.w;p.h=m.to.h;
+    }
     // belts are additive (v1 docs predate them); keep only well-formed "int,int" -> E|W|N|S entries.
     if (!doc.belts || typeof doc.belts !== 'object' || Array.isArray(doc.belts)) doc.belts = {};
     else { const clean = {}; for (const k in doc.belts) { const d = doc.belts[k]; if (/^-?\d+,-?\d+$/.test(k) && (d === 'E' || d === 'W' || d === 'N' || d === 'S')) clean[k] = d; } doc.belts = clean; }
@@ -2420,13 +2548,24 @@ const WorldModel = (() => {
     starterDoc() {
       const doc = freshDoc();
       const room = doc.rooms[doc.meta.spawnRoomId];
-      room.rects = [{ x1: 0, y1: 0, x2: 13, y2: 8 }];
-      room.name = 'HAB-01';
+      room.rects = [{ x1: 0, y1: 0, x2: 17, y2: 10 }];
+      room.name = 'HOME';
+      room.floorMat = 'resin';
+      room.wallMat = 'panelled';
       room.hullStyle = 'bone';
       doc.props = [
-        { id: 'p' + doc._nid++, t: 'crate', x: 1, y: 1, w: 2, h: 1, block: true },
-        { id: 'p' + doc._nid++, t: 'rackV', x: 11, y: 1, w: 1, h: 2, block: true },
-        { id: 'p' + doc._nid++, t: 'plant', x: 11, y: 6, w: 1, h: 1, block: false }
+        // The five essentials are real floor grants. Keep the desk unassigned so
+        // ensureWorkstation adopts it for the new Commander on the normal boot path.
+        // User-approved placement from the live station, 2026-09-15.
+        // Preserve this composition and the original 18 x 11 room footprint.
+        { id: 'p' + doc._nid++, t: 'desk', x: 8, y: 1, w: 2, h: 1, block: true },
+        { id: 'p' + doc._nid++, t: 'war_intelcab', x: 1, y: 0, w: 1, h: 2, block: true },
+        { id: 'p' + doc._nid++, t: 'gigs_servercart', x: 1, y: 9, w: 1, h: 1, block: true },
+        { id: 'p' + doc._nid++, t: 'comms_dish', x: 14, y: 0, w: 2, h: 2, block: true },
+        { id: 'p' + doc._nid++, t: 'workbench', x: 3, y: 1, w: 2, h: 1, block: true },
+        { id: 'p' + doc._nid++, t: 'studio', x: 14, y: 8, w: 2, h: 2, block: true },
+        { id: 'p' + doc._nid++, t: 'plant', x: 0, y: 0, w: 1, h: 1, block: false },
+        { id: 'p' + doc._nid++, t: 'plant', x: 17, y: 0, w: 1, h: 1, block: false }
       ];
       return doc;
     },

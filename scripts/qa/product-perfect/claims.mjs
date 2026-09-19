@@ -147,7 +147,7 @@ function git(repoRoot, args, options = {}) {
     encoding: options.encoding === 'buffer' ? null : (options.encoding || 'utf8'),
     input: options.input,
     windowsHide: true,
-    maxBuffer: 64 * 1024 * 1024
+    maxBuffer: options.maxBuffer ?? 64 * 1024 * 1024
   });
   if (result.status !== 0 || result.error) {
     const stderr = Buffer.isBuffer(result.stderr)
@@ -177,6 +177,7 @@ export function resolveCandidateCommit(repoRoot = REPO_ROOT, candidate = 'HEAD')
 
 const TRACKED_AT_COMMIT = new Map();
 const BLOB_AT_COMMIT = new Map();
+const BLOB_BY_OID = new Map();
 
 export function trackedPathsAtCommit(repoRoot = REPO_ROOT, candidateCommit = 'HEAD') {
   const commit = resolveCandidateCommit(repoRoot, candidateCommit);
@@ -193,7 +194,8 @@ function readAtCommit(repoRoot, candidateCommit, relative) {
   const safe = safeRelative(relative);
   const key = path.resolve(repoRoot) + '\0' + commit + '\0' + safe;
   if (!BLOB_AT_COMMIT.has(key)) preloadAtCommit(repoRoot, commit, [safe]);
-  return Buffer.from(BLOB_AT_COMMIT.get(key));
+  // Internal readers only hash/search/parse these bytes; they never mutate them.
+  return BLOB_AT_COMMIT.get(key);
 }
 
 function preloadAtCommit(repoRoot, candidateCommit, relativePaths) {
@@ -202,21 +204,55 @@ function preloadAtCommit(repoRoot, candidateCommit, relativePaths) {
   const missing = sortedUnique(relativePaths).map(safeRelative).filter(relative => !BLOB_AT_COMMIT.has(root + '\0' + commit + '\0' + relative));
   if (!missing.length) return;
   const input = missing.map(relative => commit + ':' + relative).join('\n') + '\n';
-  const output = Buffer.from(git(repoRoot, ['cat-file', '--batch'], { encoding: 'buffer', input }));
-  let offset = 0;
-  for (const relative of missing) {
-    const lineEnd = output.indexOf(0x0a, offset);
-    if (lineEnd < 0) throw new Error('git cat-file batch ended before ' + relative);
-    const header = output.subarray(offset, lineEnd).toString('utf8');
-    const match = /^([0-9a-f]{40}) blob ([0-9]+)$/.exec(header);
+  // Prefix audits include binary assets. Read their sizes first so growth of the
+  // checked surface never overflows one aggregate stdout buffer or drops a path.
+  const headers = text(git(repoRoot, ['cat-file', '--batch-check'], { input })).trimEnd().split('\n');
+  if (headers.length !== missing.length) throw new Error('git cat-file size batch returned an unexpected record count');
+  const rows = missing.map((relative, index) => {
+    const header = headers[index], match = /^([0-9a-f]{40}) blob ([0-9]+)$/.exec(header);
     if (!match) throw new Error('git cat-file could not read ' + relative + ': ' + header);
-    const size = Number(match[2]);
-    const start = lineEnd + 1;
-    const end = start + size;
-    if (end >= output.length || output[end] !== 0x0a) throw new Error('git cat-file returned truncated bytes for ' + relative);
-    BLOB_AT_COMMIT.set(root + '\0' + commit + '\0' + relative, Buffer.from(output.subarray(start, end)));
-    offset = end + 1;
+    const size = Number(match[2]), bytes = size + Buffer.byteLength(header) + 2;
+    if (!Number.isSafeInteger(bytes)) throw new Error('git cat-file blob size is unsupported for ' + relative);
+    return { relative, oid: match[1], size, bytes, header };
+  });
+  const BATCH_BYTES = 16 * 1024 * 1024;
+  const readBatch = batch => {
+    const expectedBytes = batch.reduce((sum, row) => sum + row.bytes, 0);
+    // A single large blob gets its exact declared capacity; normal batches stay
+    // bounded. The object IDs are immutable and verified again in the payload.
+    const output = Buffer.from(git(repoRoot, ['cat-file', '--batch'], {
+      encoding: 'buffer', input: batch.map(row => row.oid).join('\n') + '\n',
+      maxBuffer: Math.max(BATCH_BYTES, expectedBytes)
+    }));
+    let offset = 0;
+    for (const row of batch) {
+      const lineEnd = output.indexOf(0x0a, offset);
+      if (lineEnd < 0) throw new Error('git cat-file batch ended before ' + row.relative);
+      const header = output.subarray(offset, lineEnd).toString('utf8');
+      if (header !== row.header) throw new Error('git cat-file payload disagrees with size record for ' + row.relative);
+      const start = lineEnd + 1, end = start + row.size;
+      if (end >= output.length || output[end] !== 0x0a) throw new Error('git cat-file returned truncated bytes for ' + row.relative);
+      const bytes = Buffer.from(output.subarray(start, end));
+      BLOB_BY_OID.set(row.oid, bytes);
+      BLOB_AT_COMMIT.set(root + '\0' + commit + '\0' + row.relative, bytes);
+      offset = end + 1;
+    }
+    if (offset !== output.length) throw new Error('git cat-file batch returned unexpected trailing bytes');
+  };
+  let batch = [], bytes = 0;
+  for (const row of rows) {
+    // Every path is still resolved by Git above. Identical immutable objects can
+    // share bytes across candidate commits and temporary comparator repositories.
+    const cached = BLOB_BY_OID.get(row.oid);
+    if (cached) {
+      if (cached.length !== row.size) throw new Error('git blob size changed for ' + row.relative);
+      BLOB_AT_COMMIT.set(root + '\0' + commit + '\0' + row.relative, cached);
+      continue;
+    }
+    if (batch.length && bytes + row.bytes > BATCH_BYTES) { readBatch(batch); batch = []; bytes = 0; }
+    batch.push(row); bytes += row.bytes;
   }
+  if (batch.length) readBatch(batch);
 }
 
 function isAncestor(repoRoot, sourceCommit, candidateCommit) {
@@ -453,21 +489,65 @@ function verificationPaths(ledger, allTracked) {
   return sortedUnique(paths);
 }
 
-function verifyCheck(check, readFile, label, errors, allTracked) {
-  const targets = checkTargets(check, allTracked);
-  if (!targets.length) { errors.push(label + ' scope matched no tracked files'); return; }
-  for (const target of targets) {
-    let contents;
-    try { contents = Buffer.from(readFile(target)).toString('utf8'); }
-    catch (error) { errors.push(label + ' unreadable ' + target + ': ' + error.message); continue; }
-    if (check.kind === 'contains' && !contents.includes(check.needle)) {
-      errors.push(label + ' locator missing in ' + target + ': ' + JSON.stringify(check.needle));
+// Git snapshot buffers are immutable. Cache only search booleans, never decoded artwork;
+// injected readers stay uncached so a changed fixture cannot inherit an earlier verdict.
+function observeCheck(bytes, check) {
+  const needles = check.kind === 'contains' ? [check.needle] : check.needles.map(n => text(n).toLowerCase());
+  // Non-ASCII case folding can depend on adjacent letters (e.g. final sigma).
+  // Keep the original whole-string semantics for that uncommon check shape.
+  if (needles.some(n => /[^\x00-\x7f]/.test(n))) {
+    const value = bytes.toString('utf8');
+    const contents = check.kind === 'absent' ? value.toLowerCase() : value;
+    return needles.map(n => contents.includes(n));
+  }
+  const found = needles.map(() => false), decoder = new TextDecoder('utf-8');
+  const overlap = Math.max(0, ...needles.map(n => n.length - 1));
+  let tail = '';
+  // Texture packs are in prefix scopes too. Decode bounded chunks, once per
+  // check, rather than allocating a whole-asset lowercase string per needle.
+  for (let offset = 0; offset < bytes.length || offset === 0; offset += 1024 * 1024) {
+    const end = Math.min(bytes.length, offset + 1024 * 1024);
+    let chunk = decoder.decode(bytes.subarray(offset, end), { stream: end < bytes.length });
+    if (check.kind === 'absent') chunk = chunk.toLowerCase();
+    const contents = tail + chunk;
+    needles.forEach((needle, i) => { if (!found[i] && contents.includes(needle)) found[i] = true; });
+    if (found.every(Boolean)) break;
+    tail = overlap ? contents.slice(-overlap) : '';
+  }
+  return found;
+}
+function verifyCheck(check, bytes, label, errors, target, hits) {
+  const key = JSON.stringify([check.kind, check.needle, check.needles]);
+  let found = hits.get(key);
+  if (!found) { found = observeCheck(Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes), check); hits.set(key, found); }
+  if (check.kind === 'contains' && !found[0]) errors.push(label + ' locator missing in ' + target + ': ' + JSON.stringify(check.needle));
+  if (check.kind === 'absent') for (const [i, needle] of check.needles.entries()) {
+    if (found[i]) errors.push(label + ' absence escaped in ' + target + ': ' + JSON.stringify(needle));
+  }
+}
+
+const CHECKS_BY_BLOB = new WeakMap();
+export function verifyAuthorityChecks(requests, readFile, errors, allTracked, immutable = false) {
+  const byTarget = new Map();
+  for (const { check, label } of requests) {
+    const targets = checkTargets(check, allTracked);
+    if (!targets.length) errors.push(label + ' scope matched no tracked files');
+    for (const target of targets) {
+      if (!byTarget.has(target)) byTarget.set(target, []);
+      byTarget.get(target).push({ check, label });
     }
-    if (check.kind === 'absent') {
-      for (const needle of check.needles) {
-        if (contents.toLowerCase().includes(text(needle).toLowerCase())) errors.push(label + ' absence escaped in ' + target + ': ' + JSON.stringify(needle));
-      }
+  }
+  for (const [target, checks] of byTarget) {
+    let bytes;
+    try { bytes = readFile(target); }
+    catch (error) {
+      for (const { label } of checks) errors.push(label + ' unreadable ' + target + ': ' + error.message);
+      continue;
     }
+    const cacheable = immutable && Buffer.isBuffer(bytes);
+    const hits = cacheable && CHECKS_BY_BLOB.get(bytes) || new Map();
+    for (const { check, label } of checks) verifyCheck(check, bytes, label, errors, target, hits);
+    if (cacheable) CHECKS_BY_BLOB.set(bytes, hits);
   }
 }
 
@@ -590,6 +670,8 @@ export function inspectClaimsAuthority(options = {}) {
       }
     }
     const locked = new Set(lockedPaths);
+    const checks = [];
+    const verifyCheck = (check, _readFile, label) => checks.push({ check, label });
     for (const claim of ledger.claims) {
       for (let index = 0; index < claim.surfaceLocators.length; index += 1) {
         const locator = claim.surfaceLocators[index];
@@ -602,6 +684,7 @@ export function inspectClaimsAuthority(options = {}) {
     }
     for (const row of ledger.waveVerdicts) row.authorityChecks.forEach((check, index) => verifyCheck(check, readFile, row.id + '.authorityChecks[' + index + ']', planningReasons, allTracked));
     for (const row of ledger.doNotRebuild) row.authorityChecks.forEach((check, index) => verifyCheck(check, readFile, row.id + '.authorityChecks[' + index + ']', planningReasons, allTracked));
+    verifyAuthorityChecks(checks, readFile, planningReasons, allTracked, !options.readFile && !!candidateCommit);
   }
 
   const uniquePlanningReasons = sortedUnique(planningReasons);

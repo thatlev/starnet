@@ -926,8 +926,19 @@ A.eq(JSON.stringify(WM.deserialize({ rooms: {}, order: [], props: [], edges: [{ 
 
 {
   const starter = WM.create(WM.starterDoc());
+  const PS = require('../frontend/app/propsprites.js');
+  for (const type of PS.STARTER) {
+    A.eq(starter.props().filter(p => p.t === type).length, 1, 'fresh station includes exactly one ' + type);
+  }
+  const construction = WM.create({ ...WM.starterDoc(), props: [] });
+  for (const prop of starter.props()) {
+    const spec = PS.spec(prop.t);
+    A.eq([prop.w, prop.h], [spec.w, spec.h], prop.t + ' uses its catalog footprint');
+    A.ok(construction.addProp(prop).ok, prop.t + ' fits without overlapping another starter prop');
+  }
   const desk = starter.ensureWorkstation('agent');
   A.ok(desk.ok, 'composed starter has an approachable real agent desk');
+  A.eq(starter.props().filter(p => p.t === 'desk').length, 1, 'boot adopts the prepared desk without adding another');
   A.ok(starter.canPlaceProp('intake', 4, 4, 2, 2).ok, 'starter leaves the central workflow lane free');
   const restored = WM.deserialize(JSON.parse(JSON.stringify(starter.serialize())));
   A.eq(restored.props().length, starter.props().length, 'starter furniture survives a save round-trip without duplicates');
@@ -940,9 +951,9 @@ A.eq(JSON.stringify(WM.deserialize({ rooms: {}, order: [], props: [], edges: [{ 
 /* ---- new deck catalogs use the existing placement, palette and persistence paths ---- */
 {
   const oldMaterials = ['spine', 'alloy', 'runner', 'treadway', 'meshway', 'plate', 'diamond', 'cargo', 'panel', 'tile', 'ceramic', 'resin', 'tread', 'soft', 'grate', 'hex', 'plank', 'turf', 'basalt', 'parquet', 'rubber'];
-  const additions = { basalt: 'BASALT', parquet: 'PARQUET', rubber: 'RUBBER', slotted: 'SLOTTED', terrazzo: 'TERRAZZO', octile: 'OCTILE' };
+  const additions = { basalt: 'BASALT', parquet: 'PARQUET', rubber: 'RUBBER', slotted: 'SLOTTED', terrazzo: 'TERRAZZO', octile: 'OCTILE', flightdeck: 'FLIGHT DECK', lunar: 'LUNAR', maggrid: 'MAG GRID', habitat: 'HABITAT' };
   A.eq(WM.MAT_ORDER.slice(0, oldMaterials.length), oldMaterials, 'new decks retain all 21 previous picker entries in their original order');
-  A.eq(WM.MAT_ORDER.slice(oldMaterials.length), ['slotted', 'terrazzo', 'octile'], 'the three new material choices append to the existing catalog');
+  A.eq(WM.MAT_ORDER.slice(oldMaterials.length), ['slotted', 'terrazzo', 'octile', 'flightdeck', 'lunar', 'maggrid', 'habitat'], 'new material choices append to the existing catalog');
   A.eq(new Set(WM.MAT_ORDER).size, WM.MAT_ORDER.length, 'the material picker has no duplicate entries');
   for (const [mid, label] of Object.entries(additions)) {
     const st = WM.create(), id = st.spawnRoomId(), def = st.FLOOR_MATERIALS[mid];

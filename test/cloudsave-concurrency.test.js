@@ -81,16 +81,24 @@ function client({ beforePost = async () => {}, onReload = () => {}, cache = new 
     const untouched = JSON.parse(changedCache.get('starnet.save'));
     assert.equal(untouched._saveDirty, true, 'ACK cannot mark a different newer browser document clean');
     assert.equal(untouched._saveRevision, unsent._saveRevision, 'ACK cannot rebase an unsubmitted edit');
-    const lostAckCache = new Map();
-    const delivered = structuredClone(store.load('agent'));
-    delivered._saveDirty = true; delivered._saveRevision--;
-    delivered._saveClient = 'a-window-that-closed'; delivered.updatedAt--;
-    lostAckCache.set('starnet.save', JSON.stringify(delivered));
-    const reopened = client({ cache: lostAckCache, beforePost: () => { throw Error('identical saved content must not be reposted'); } });
-    const recovered = await reopened.reconcile(delivered);
-    assert.equal(recovered._saveDirty, false, 'lost ACK on close is reconciled as already saved');
-    assert.equal(reopened.revision(), store.load('agent')._saveRevision);
-    assert.equal(reopened.health().conflict, null, 'a new window ID cannot invent a conflict for identical content');
+    // Closing can deliver a beacon without receiving its ACK. A new page has a new client ID,
+    // but must recognize the identical durable document before its first autosave changes it.
+    const beaconCache = new Map(), beaconOwner = client({ cache: beaconCache });
+    const beforeBeacon = await beaconOwner.reconcile(null);
+    beforeBeacon.updatedAt = 20000; beforeBeacon._saveDirty = true;
+    beforeBeacon.workstreams.push({ id: 'saved-on-exit' });
+    const lostAckCache = structuredClone(beforeBeacon);
+    beaconOwner.push(beforeBeacon); assert.equal(await beaconOwner.flush({ force: true }), true);
+    beaconCache.set('starnet.save', JSON.stringify(lostAckCache));
+    const afterReload = client({ cache: beaconCache });
+    const recovered = await afterReload.reconcile(lostAckCache);
+    assert.equal(recovered._saveDirty, false, 'durable matching payload acknowledges a lost unload ACK');
+    assert.equal(recovered._saveRevision, store.load('agent')._saveRevision);
+    assert.equal((await afterReload.flushForUpdate()).hadPending, false, 'identical payload is not resubmitted under a new client ID');
+    recovered.updatedAt++; recovered._saveDirty = true;
+    recovered.workstreams.push({ id: 'after-immediate-reload' }); afterReload.push(recovered);
+    assert.equal(await afterReload.flush({ force: true }), true, 'next autosave uses the durable revision after immediate reload');
+    assert.equal(afterReload.health().conflict, null);
     console.log('cloudsave-concurrency: two clients, conflict export, update refusal, offline restart and queued cache acknowledgements PASS');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

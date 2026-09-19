@@ -79,7 +79,8 @@ function footViolations(g, start, pts) {
     let prev = from;
     const samples = Math.max(240, (Math.abs(to.x-from.x)+Math.abs(to.y-from.y))*24);
     for (let i=1; i<=samples; i++) {
-      const t=i/samples, x=Math.floor(from.x+.5+(to.x-from.x)*t), y=Math.floor(from.y+11/12+(to.y-from.y)*t);
+      const fa=g.footPoint(from.x,from.y),fb=g.footPoint(to.x,to.y);
+      const t=i/samples, x=Math.floor((fa.x+(fb.x-fa.x)*t)/12), y=Math.floor((fa.y+(fb.y-fa.y)*t)/12);
       if (!g.walkable(x,y,null)) bad++;
       if (x!==prev.x && !g.canStep(prev.x,prev.y,x,prev.y)) bad++;
       if (y!==prev.y && !g.canStep(x,prev.y,x,y)) bad++;
@@ -102,16 +103,16 @@ const worldSource=require('fs').readFileSync(require('path').join(__dirname,'../
 const helpers=worldSource.slice(worldSource.indexOf('  function startBodyPath('),worldSource.indexOf('  function setPathTo('));
 const nudge=worldSource.slice(worldSource.indexOf('  function nudgeBody('),worldSource.indexOf('  /* SLIDE,'));
 const runtime=Function('geo','blocked','footOf','tileOf',helpers+nudge+'; return { startBodyPath, canRoundCorner, nudgeBody };')(
-  geo,null,(x,y)=>({x:x*12+6,y:y*12+11}),(x,y)=>({x:Math.floor(x/12),y:Math.floor(y/12)}));
+  geo,null,(x,y)=>geo.footPoint(x,y),(x,y)=>({x:Math.floor(x/12),y:Math.floor(y/12)}));
 let rounded=0,held=0,walkBad=0,arrivals=0;
 seed=83;
 for(let n=0;n<250;n++) {
   const a=cells[Math.floor(rnd()*cells.length)], dest=cells[Math.floor(rnd()*cells.length)];
   const pts=path(a.x,a.y,dest.x,dest.y,null); if(!pts || !pts.length)continue;
-  const b={px:a.x*12+6,py:a.y*12+11}; runtime.startBodyPath(b,pts);
+  const start=geo.footPoint(a.x,a.y),b={px:start.x,py:start.y}; runtime.startBodyPath(b,pts);
   let prev=a,guard=12000;
   while(b.pathIdx<b.pathPts.length && guard-->0) {
-    const wp=b.pathPts[b.pathIdx],tx=wp.x*12+6,ty=wp.y*12+11;
+    const wp=b.pathPts[b.pathIdx],foot=geo.footPoint(wp.x,wp.y),tx=foot.x,ty=foot.y;
     const d=Math.hypot(tx-b.px,ty-b.py),more=b.pathIdx+1<b.pathPts.length;
     // The engine increments pathIdx when it selects the current waypoint.
     b.pathIdx++; const clear=more && runtime.canRoundCorner(b); b.pathIdx--;
@@ -138,7 +139,7 @@ sealed.addRoom({kind:'lab',rect:{x1:18,y1:0,x2:27,y2:10}});
 sealed.addProp({t:'airlock',x:20,y:4,w:1,h:1,block:false,door:'closed'});
 const sealedGeo=sealed.projectGeometry();
 const sealedRuntime=Function('geo','blocked','footOf','tileOf',helpers+nudge+'; return {startBodyPath,nudgeBody};')(
-  sealedGeo,null,(x,y)=>({x:x*12+6,y:y*12+11}),(x,y)=>({x:Math.floor(x/12),y:Math.floor(y/12)}));
+  sealedGeo,null,(x,y)=>sealedGeo.footPoint(x,y),(x,y)=>({x:Math.floor(x/12),y:Math.floor(y/12)}));
 let wallPair;
 for(const a of cells) {
   const b={x:a.x+1,y:a.y};
@@ -155,7 +156,9 @@ let reanchor=null;
 for(const a of cells) {
   for(const dest of cells.slice(0,100)) {
     const pts=path(a.x,a.y,dest.x,dest.y,null);if(!pts||!pts.length)continue;
-    const b={px:a.x*12+.3,py:a.y*12+.3};runtime.startBodyPath(b,pts);
+    const b={px:a.x*12+.3,py:a.y*12+.3};
+    if(!geo.clearFootSegment(b.px,b.py,b.px,b.py,null))continue;
+    runtime.startBodyPath(b,pts);
     if(b.pathPts.length>pts.length) {reanchor={a,b,pts};break;}
   }
   if(reanchor)break;
@@ -169,5 +172,48 @@ if(reanchor){
   A.eq(footViolations(geo,a,pts),0,'the subsequent anchored route remains clear');
   const walker={px:a.x*12+6,py:a.y*12+11,target:{x:pts[0].x*12+6,y:pts[0].y*12+11}};
   A.eq(runtime.nudgeBody(walker,b.px-walker.px,b.py-walker.py),false,'a legal-floor nudge cannot invalidate the remaining doorway leg');
+}
+// A southbound arrival may be on a logical room tile while still inside the
+// raised north face. It must clear the face before turning behind its shoulder.
+const local=(x,y)=>({x:x-geo.origin.tx,y:y-geo.origin.ty});
+const mouth=local(25,16),shoulder=local(27,16);
+const early={x:(mouth.x+.5)*12,y:mouth.y*12+4};
+const late={x:early.x,y:mouth.y*12+11};
+const destination={x:(shoulder.x+.5)*12,y:shoulder.y*12+11};
+A.ok(geo.walkable(mouth.x,mouth.y)&&geo.walkable(shoulder.x,shoulder.y),'doorway and wall-edge floor tiles remain walkable');
+A.eq(geo.clearFootSegment(early.x,early.y,destination.x,destination.y),false,'south entry cannot turn through the visible wall face');
+A.eq(geo.clearFootSegment(late.x,late.y,destination.x,destination.y),true,'south entry can turn once feet clear the wall');
+A.eq(geo.clearFootSegment(destination.x,destination.y,early.x,early.y),false,'reverse traversal cannot cut the same shoulder');
+const edge=local(30,8);
+A.eq(geo.clearFootSegment(edge.x*12+11,edge.y*12+11,edge.x*12+11,edge.y*12+11),false,'east wall face is not floor clearance');
+
+// A raised north doorway has splayed jambs above the logical room boundary.
+// Sample the full sprite-width passage independently of clearFootSegment.
+for(const width of [2,3,4]) {
+  const station=WM.create();station.placeHallway({rect:{x1:7,y1:-6,x2:6+width,y2:-1}});
+  const g=station.projectGeometry(),ox=g.origin.tx,oy=g.origin.ty;
+  const left=(7-ox)*12,right=(7+width-ox)*12,top=-oy*12-34,bottom=-oy*12+10;
+  const reach=Math.min(6,Math.max(1,Math.floor((right-left-8)/2)));
+  let bad=0,completed=0;
+  for(const side of [7,6+width])for(const reverse of [false,true]) {
+    let a={x:side-ox,y:-5-oy},b={x:side-ox,y:4-oy};if(reverse)[a,b]=[b,a];
+    const pts=g.path(a.x,a.y,b.x,b.y);if(!pts)continue;completed++;
+    let prev=g.footPoint(a.x,a.y);
+    for(const tile of pts) {
+      const to=g.footPoint(tile.x,tile.y);
+      A.ok(g.clearFootSegment(prev.x,prev.y,to.x,to.y),'door lane leg is legal at width '+width);
+      for(let n=0;n<=200;n++) {
+        const x=prev.x+(to.x-prev.x)*n/200,y=prev.y+(to.y-prev.y)*n/200;
+        if(y>=top&&y<=bottom&&(x-4.5<left+reach+1-1e-8||x+4.5>right-reach-1+1e-8))bad++;
+      }
+      prev=to;
+    }
+  }
+  A.eq(completed,4,'both doorway edges remain reachable in both directions at width '+width);
+  A.eq(bad,0,'the whole sprite clears both raised jambs at width '+width);
+  A.eq(g.clearFootSegment(left+6,top+2,left+6,bottom-2),false,'old left-wall shortcut is rejected');
+  A.eq(g.clearFootSegment(right-6,top+2,right-6,bottom-2),false,'old right-wall shortcut is rejected');
+  const restored=WM.deserialize(station.serialize()).projectGeometry();
+  A.eq(restored.footPoint(7-ox,-2-oy),g.footPoint(7-ox,-2-oy),'saved layouts recover the same safe anchor');
 }
 A.report('path-smoothing');

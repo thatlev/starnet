@@ -39,6 +39,14 @@ class RecordingContext {
     this.gradients.push(gradient); return gradient;
   }
   fillRect(...args) { this.fills.push({ args, composite: this.globalCompositeOperation, style: this.fillStyle }); }
+  save() {
+    (this.states ||= []).push({ globalAlpha: this.globalAlpha, fillStyle: this.fillStyle,
+      globalCompositeOperation: this.globalCompositeOperation, imageSmoothingEnabled: this.imageSmoothingEnabled,
+      imageSmoothingQuality: this.imageSmoothingQuality });
+  }
+  restore() { Object.assign(this, this.states.pop()); }
+  rect(...args) { (this.rects ||= []).push(args); }
+  clip() { this.clipCount = (this.clipCount || 0) + 1; }
   beginPath() {}
   ellipse(...args) { this.ellipses.push({ args, alpha: this.globalAlpha, color: this.fillStyle }); }
   fill() {}
@@ -53,7 +61,7 @@ class RecordingCanvas {
   get height() { return this._height; }
   getContext() { return this.context; }
 }
-async function harness() {
+async function harness(production = false) {
   const { decodePNG } = await import('../scripts/lib/png.mjs');
   class SpriteImage {
     set src(src) {
@@ -83,10 +91,14 @@ async function harness() {
     fetch: async () => ({ ok: true, json: async () => manifest }),
     console: { log() {}, warn(...args) { throw new Error(args.join(' ')); } }
   });
+  if (production) {
+    vm.runInContext(fs.readFileSync(path.join(frontend, 'app/data-shim.js'), 'utf8'), context);
+    vm.runInContext('globalThis.catalog = DATA.SKINS;', context);
+  }
   vm.runInContext(source + '\nglobalThis.testSprites = SPRITES;', context);
   const sprites = context.testSprites;
   await sprites.init(); await sprites.ensureSkin('blank'); await sprites.ensureSkin('skeleton');
-  return { sprites, document, canvases };
+  return { sprites, document, canvases, catalog: context.catalog };
 }
 function body(extra) {
   return { id: 'crew-1', skin: 'blank', px: 80.25, py: 70.25, dir: 'south', state: 'idle', aph: 1, ...extra };
@@ -105,6 +117,38 @@ function padFor(image) {
   throw new Error('empty production sprite');
 }
 const appearance = { light: { color: [96, 168, 240], strength: 0.5, dx: 1, dy: 0 } };
+
+test('normal desktop roster renders the selected refresh without preview flags, with planted walking feet', async () => {
+  const selected = JSON.parse(fs.readFileSync(path.join(frontend, 'assets/skin-study-0914/runtime-motion.json')));
+  const { sprites, catalog } = await harness(true);
+  assert.equal(Object.keys(catalog).length, 37);
+  for (const skin of selected.skins) {
+    assert.equal(catalog[skin.skin].set, skin.renderSet, skin.skin + ' keeps its saved ID');
+    await sprites.ensureSkin(skin.skin);
+    assert.equal(sprites.isSkinReady(skin.skin), true);
+    const b = body({ skin: skin.skin, id: skin.skin === 'ultron' ? 'ULTRON' : skin.skin });
+    assert.equal(sprites.setForBody(b), skin.renderSet);
+    close(sprites.bodyScale(b), selected.standingHeight / skin.sourceStandingHeight, skin.skin + ' selected scale');
+    for (const dir of ['south', 'east', 'north', 'west']) {
+      const walking = body({ ...b, state: 'walk', dir });
+      for (let i = 0; i < 16; i++) {
+        const { frame } = draw(sprites, walking, i * 100, {});
+        assert.ok(frame, skin.skin + ' real master drawn');
+        assert.equal(walking._pose, skin.renderSet + '.walk.' + dir);
+        // Selected masters meet the floor at a quarter-unit inset, within half a snapped pixel.
+        assert.ok(Math.abs(walking._renderGroundGap - 0.25) <= 0.51, skin.skin + ' measured feet remain planted');
+      }
+    }
+    for (const [key, frames] of Object.entries(selected.sprites).filter(([key]) => key.startsWith(skin.renderSet + '.'))) {
+      assert.equal(manifest.sprites[key]?.length, frames.length, key + ' complete track');
+      frames.forEach((frame, i) => assert.ok(
+        fs.readFileSync(path.join(frontend, 'assets/sprites', frame)).equals(
+          fs.readFileSync(path.join(frontend, 'assets/sprites', manifest.sprites[key][i]))), key + ' approved bytes/order'));
+    }
+  }
+  assert.equal(catalog.minionchar, catalog.station_minion, 'retired duplicate remains readable in existing saves');
+  assert.equal(sprites.setForBody(body({ skin: 'unknown' })), 'approved_android', 'unknown/default skin uses refresh');
+});
 
 test('standing breath fixes the real measured foot line, keeps native masters and restores sampling state', async () => {
   const { sprites } = await harness();
@@ -176,7 +220,7 @@ test('reduced motion freezes decorative breath/gesture/spill without inventing o
   assert.equal(worker._pose, 'blank.type.north');
   assert.notEqual(work1.frame.image, work2.frame.image, 'working still follows its real typing track');
   assert.deepEqual(Object.keys(worker).filter(k => !Object.hasOwn(body({ working: true, sitting: true, dir: 'north' }), k)).sort(),
-    ['_pose', '_rA', '_rAt', '_rD8', '_rW', '_turnAng'], 'only established render telemetry is added');
+    ['_pose', '_rA', '_rAt', '_rD8', '_rW', '_renderCycleUnits', '_renderFrame', '_renderGroundGap', '_renderSpeechAccent', '_renderStandingHeight', '_renderTravelError', '_speechAt', '_speechEase', '_turnAng'], 'only render telemetry and speech interpolation state are added');
   const spill1 = draw(sprites, body({ id: 'ULTRON' }), 1000, { reducedMotion: true }).ctx.ellipses;
   const spill2 = draw(sprites, body({ id: 'ULTRON' }), 2200, { reducedMotion: true }).ctx.ellipses;
   assert.deepEqual(spill1, spill2, 'leader spill stops pulsing under reduced motion');

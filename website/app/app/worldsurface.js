@@ -18,15 +18,17 @@
 'use strict';
 
 const WorldSurface = (() => {
-  const VERSION = 5;
+  const VERSION = 6;
   const CELL = 12;
   const MATERIALS = Object.freeze([
     'spine', 'alloy', 'plate', 'panel', 'tile', 'tread', 'soft', 'grate', 'hex',
-    'plank', 'turf', 'diamond', 'resin', 'ceramic', 'cargo', 'runner', 'treadway', 'meshway', 'basalt', 'parquet', 'rubber', 'slotted', 'terrazzo', 'octile'
+    'plank', 'turf', 'diamond', 'resin', 'ceramic', 'cargo', 'runner', 'treadway', 'meshway', 'basalt', 'parquet', 'rubber', 'slotted', 'terrazzo', 'octile', 'flightdeck', 'lunar', 'maggrid', 'habitat'
   ]);
-  const WALLS = Object.freeze(['bulkhead', 'courses', 'service', 'plating', 'ribbed', 'panelled', 'pipework']);
+  const WALLS = Object.freeze(['bulkhead', 'courses', 'service', 'plating', 'ribbed', 'panelled', 'pipework', 'pressure', 'radiator', 'utility', 'acoustic']);
   const materialSet = new Set(MATERIALS), wallSet = new Set(WALLS);
   const palettes = new Map();
+  const remastered = () => typeof IndustrialTextures !== 'undefined' && IndustrialTextures &&
+    typeof IndustrialTextures.isRemaster === 'function' && IndustrialTextures.isRemaster();
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const mod = (v, n) => ((v % n) + n) % n;
   const detailOf = opts => clamp(Number.isFinite(opts && opts.detail) ? opts.detail : 1, 0, 1.5);
@@ -118,14 +120,38 @@ const WorldSurface = (() => {
   }
 
   function paintFloorTile(ctx, material, base, X, Y, tile, worldTx, worldTy, opts) {
-    if (typeof IndustrialTextures !== 'undefined' && IndustrialTextures.floor(ctx, X, Y, tile || CELL, worldTx, worldTy)) return true;
     const mat = materialSet.has(material) ? material : 'plate';
     const size = Math.max(1, Math.round(tile || CELL)), d = detailOf(opts);
+    // The optional art pack receives the same material, paint and physical tile
+    // address as the native recipe. Declined or pending art keeps that recipe.
+    if (typeof IndustrialTextures !== 'undefined' && IndustrialTextures && typeof IndustrialTextures.floor === 'function' &&
+        IndustrialTextures.floor(ctx, X, Y, size, worldTx, worldTy, mat, base, opts)) return true;
     const pal = palette(base, d), p = brush(ctx, X, Y, size);
     const tx = Math.floor(worldTx || 0), ty = Math.floor(worldTy || 0), wx = tx * CELL, wy = ty * CELL;
     p(0, 0, CELL, CELL, pal.base);
     if (!d) return true;
 
+    if (['flightdeck', 'lunar', 'maggrid', 'habitat'].includes(mat)) {
+      const slab = mat === 'lunar', width = slab ? 48 : 24, height = 24;
+      const { lx, ly, seed } = floorPanel(p, pal, wx, wy, width, height, { stagger: slab, bolts: mat === 'flightdeck' });
+      if (mat === 'flightdeck') {
+        p(-lx, -ly, 4, 4, pal.recess); p(1 - lx, 1 - ly, 2, 2, pal.metal);
+        p(20 - lx, 20 - ly, 4, 4, pal.recess);
+      } else if (mat === 'maggrid') {
+        for (const x of [3, 6, 17, 20]) { p(x - lx, 2 - ly, 1, 20, pal.metal); }
+        p(3 - lx, 10 - ly, 4, 2, pal.recess); p(17 - lx, 10 - ly, 4, 2, pal.recess);
+      } else if (mat === 'habitat') {
+        p(2 - lx, 2 - ly, 20, 20, pal.base);
+        p(-lx, -ly, 3, 3, pal.shade);
+        p(10 - lx, 15 - ly, 1, 1, pal.fine);
+      } else {
+        for (let i = 0; i < 10; i++) {
+          const n = hash(seed, i, 291);
+          p(3 + n % 42 - lx, 3 + (n >>> 10) % 18 - ly, 1 + (n >>> 20) % 2, 1, i % 3 ? pal.soft : pal.fine);
+        }
+      }
+      return true;
+    }
     if (mat === 'spine' || mat === 'alloy') {
       // Broad flush sheets, not bevelled access hatches. A one-pixel seal owns
       // each shared joint; the surface never acquires a raised perimeter frame.
@@ -354,9 +380,11 @@ const WorldSurface = (() => {
   }
 
   function paintWallTile(ctx, material, base, X, Y, tile, height, tileX, opts) {
-    if (material !== 'viewport' && typeof IndustrialTextures !== 'undefined' && IndustrialTextures.wall(ctx, X, Y, tile || CELL, height || 30, tileX)) return true;
     if (!wallSet.has(material)) return false;
     const w = Math.max(1, Math.round(tile || CELL)), h = Math.max(1, Math.round(height || 30));
+    // Specialized window, timber and hedge geometry stays with its own painter.
+    if (typeof IndustrialTextures !== 'undefined' && IndustrialTextures && typeof IndustrialTextures.wall === 'function' &&
+        IndustrialTextures.wall(ctx, X, Y, w, h, tileX, material, base, opts)) return true;
     const d = detailOf(opts), pal = palette(base, d), scale = w / CELL;
     const wx = Math.floor(tileX || 0) * CELL;
     // The face's structural depth is measured in real pixels, while its along-
@@ -369,6 +397,31 @@ const WorldSurface = (() => {
     };
     p(0, 0, CELL, h, pal.shade);
     if (!d) return true;
+    if (['pressure', 'radiator', 'utility', 'acoustic'].includes(material)) {
+      const lx = mod(wx, material === 'acoustic' ? 8 : 12);
+      p(0, 0, CELL, h, pal.base);
+      p(0, 0, CELL, 2, pal.recess); p(0, 2, CELL, 1, pal.edge);
+      p(0, h - 4, CELL, 4, pal.shade); p(0, h - 4, CELL, 1, pal.metal);
+      p(-lx, 3, 1, h - 7, pal.recess); p(1 - lx, 3, 1, h - 7, pal.fine);
+      if (material === 'pressure') {
+        p(3 - lx, 5, 7, 1, pal.fine); p(3 - lx, 6, 1, h - 12, pal.soft);
+        p(9 - lx, h - 11, 1, 3, pal.metal);
+      } else if (material === 'radiator') {
+        for (let x = 3; x < 10; x += 3) {
+          p(x - lx, 4, 2, h - 9, pal.deep); p(x - lx, 4, 1, h - 9, pal.metal);
+        }
+      } else if (material === 'utility') {
+        for (const y of [h - 10, h - 7]) {
+          p(0, y, CELL, 2, pal.recess); p(0, y, CELL, 1, pal.metal);
+        }
+        p(8 - lx, 8, 2, 3, pal.shade);
+      } else {
+        p(2 - lx, 4, 5, h - 9, pal.raised);
+        p(2 - lx, Math.floor(h / 2), 5, 1, pal.recess);
+        p(3 - lx, 6, 1, Math.max(1, Math.floor(h / 2) - 8), pal.fine);
+      }
+      return true;
+    }
     const belt = Math.max(5, Math.round(h * 0.64)), foot = Math.max(belt + 2, h - 5);
     // Four-tile period also matches the geometry renderer's face-strip cache:
     // its side/corner sampling must see the same frame as the straight face.
@@ -511,6 +564,13 @@ const WorldSurface = (() => {
         // Pitch is fixed in the signed physical tile frame. A bounds expansion
         // therefore does not slide the existing lamps or their illumination.
         let selected = candidates.filter(c => mod(c.tx + ox, 6) === 3);
+        // One smaller infill practical per 18 physical tiles adds back-wall
+        // coverage without moving or brightening the existing six-tile rhythm.
+        if (opts.infillFixtures && !corridor && length >= 12) {
+          const infill = candidates.filter(c => mod(c.tx + ox, 18) === 6 &&
+            selected.some(p => p.tx < c.tx) && selected.some(p => p.tx > c.tx));
+          selected = selected.concat(infill.map(c => ({ ...c, infill: true }))).sort((a,b) => a.tx-b.tx);
+        }
         if (corridor) selected = [];  // one practical fixture, only on a long hall
         if (!selected.length) selected = [candidates[Math.floor(candidates.length / 2)]];
         for (const c of selected) {
@@ -533,7 +593,7 @@ const WorldSurface = (() => {
           output.push({
             id: 'wall:' + (c.tx + ox) + ',' + (y + oy), kind: 'wall-fixture', zone: z,
             x: c.anchor.tx * T + T / 2, y: c.anchor.ty * T + T / 2,
-            r: T * (corridor ? 4.5 : taskLamp ? 5.8 : 6.5), rgb, gain: corridor ? 0.64 : taskLamp ? 1.16 : 0.82,
+            r: T * (c.infill ? 4.1 : corridor ? 4.5 : taskLamp ? 5.8 : 6.5), rgb, gain: c.infill ? 0.48 : corridor ? 0.64 : taskLamp ? 1.16 : 0.82,
             fixtureX, fixtureY, tileX: c.tx, tileY: y,
             emitX: fixtureX, emitY: fixtureY + 2.5, normalX: 0, normalY: 1,
             base: geo.wallBaseOf ? geo.wallBaseOf(z) : '#3a3b41'
@@ -553,6 +613,20 @@ const WorldSurface = (() => {
       if (v && (x + 5 <= v.x || x - 5 >= v.x + v.w || y + 6 <= v.y || y - 2 >= v.y + v.h)) continue;
       const p = palette(f.base, detailOf(opts));
       const mark = (dx, dy, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x + dx, y + dy, w, h); };
+      if (remastered()) {
+        // Same mount, housing bounds and real lens; dark cast metal and captive
+        // brass fasteners follow the bridge reference without moving its source.
+        mark(-2, -2, 4, 2, p.deep); mark(-1, -2, 2, 1, p.shade);
+        mark(-4, 1, 9, 5, p.deep);
+        mark(-5, 1, 1, 3, p.recess); mark(4, 1, 1, 3, p.recess);
+        mark(-4, 0, 8, 4, p.shade); mark(-3, 0, 6, 1, p.metal);
+        mark(-3, 1, 6, 3, p.deep);
+        mark(-4, 1, 1, 1, '#806440'); mark(3, 1, 1, 1, '#806440');
+        mark(-3, 2, 6, 1, f.rgb === '215,232,246' ? '#d7e8f6' : '#ffdeb3');
+        mark(-3, 3, 6, 1, '#695235');
+        mark(-4, 4, 2, 1, p.recess); mark(2, 4, 2, 1, p.recess);
+        continue;
+      }
       mark(-2, -2, 4, 2, p.deep);                         // bolted saddle under crown
       mark(-1, -2, 2, 1, p.shade);
       mark(-4, 1, 9, 5, p.deep);                         // housing casts a hard shadow
@@ -578,6 +652,14 @@ const WorldSurface = (() => {
     if (e) { p(10, 0, 2, CELL, pal.recess); p(9, 0, 1, CELL, pal.soft); }
     // The camera looks from the south: no invented visible inner south face.
     if (s) p(0, 11, CELL, 1, pal.soft);
+    if (remastered() && detail > 0) {
+      const wx = x + ((geo.origin && geo.origin.tx) || 0), wy = y + ((geo.origin && geo.origin.ty) || 0);
+      // Inlaid identification tabs, not lights: restrained brass stays inside
+      // the existing contact trim and follows the physical panel cadence.
+      if (n && mod(wx, 3) === 1) p(4, 1, 4, 1, '#665336');
+      if (w && mod(wy, 3) === 1) p(1, 4, 1, 4, '#665336');
+      if (e && mod(wy, 3) === 1) p(10, 4, 1, 4, '#665336');
+    }
   }
   function paint(ctx, geo, opts = {}) {
     if (!ctx || !geo || !geo.zoneGrid) return { tiles: 0, materials: [] };

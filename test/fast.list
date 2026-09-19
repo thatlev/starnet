@@ -22,6 +22,7 @@ test/live-doctor-ui.test.js
 test/report-0110-regressions.test.js
 test/outbound-failure-diagnosability.test.js
 test/reflect.test.js
+test/memory-corrections.test.js
 test/memcore.test.js
 test/cost.test.js
 test/spend.test.js
@@ -107,6 +108,7 @@ test/errorclass.test.js
 test/billing.test.js
 test/credits.test.js
 test/credits-link.test.js
+test/credits-store-recovery.test.js
 test/friendlyerror.test.js
 test/codexsignin.test.js
 test/oauthsignin.test.js
@@ -286,12 +288,14 @@ test/qa-closer.test.js
 test/qa-ready.test.js
 test/qa-product-perfect.test.js
 test/qa-product-perfect-claims.test.js
+test/qa-claims-streaming.test.js
 test/website-pricing-hold.test.js
 test/website-docs-navigation.test.js
 test/genesis-starnet-link.test.js
 test/qa-product-perfect-provenance.test.js
 test/qa-cartographer.test.js
 test/golden.test.js
+test/audit-gaze-proof.test.js
 test/qa-beginner.test.js
 test/qa-installed-first-run.test.js
 test/qa-installed-link-transport.test.js
@@ -407,6 +411,7 @@ test/questledgerstore.test.js
 test/kitout.test.js
 test/coach-dodge.test.js
 test/tutorial-connect-beat.test.js
+test/tutorial-equipped-station.test.js
 test/field-manual-accessibility.test.js
 test/class-loadouts.test.js
 test/intent-offer.test.js
@@ -468,6 +473,7 @@ test/provider-oauth-parity.test.js
 test/personality-no-sample.test.js
 test/modelpicker.test.js
 test/model-provider-reconcile.test.js
+test/model-catalog-truth.test.js
 test/agent-model-select.test.js
 test/model-reasoning-presets.test.js
 test/provider-connections-ui.test.js
@@ -477,6 +483,7 @@ test/chat-runmeta.test.js
 test/chat-stopped-retry.test.js
 test/retry-user-transcript.http.test.js
 test/comms-history-pin.test.js
+test/comms-deliverable-replay.test.js
 test/composer-paste-limit.test.js
 test/chat-linkify.test.js
 test/chat-code-copy.test.js
@@ -494,6 +501,7 @@ test/growthratings.test.js
 test/xp-upgrade.test.js
 test/dossier-reliability.test.js
 test/roster-track.test.js
+test/chat-prompt-diet.test.js
 test/returns.test.js
 test/outbox-window.test.js
 test/quest-log-window.test.js
@@ -519,6 +527,11 @@ test/cron-session-hydration.test.js
 test/loopjob.test.js
 test/loopjob-check.test.js
 test/loopjob-driver.test.js
+test/model-loop-control.test.js
+test/loop-review-controls.test.js
+test/routine-origin-race.test.js
+test/returnstore-recovery.test.js
+test/settings-save-failure.test.js
 test/loop-tools.test.js
 test/loopgit.test.js
 test/cron.oneshot.test.js
@@ -590,6 +603,7 @@ test/chain.test.js
 test/chain.join-loop.test.js
 test/chain.limits.test.js
 test/refit-card-stack.test.js
+test/refit-flow-polish.test.js
 test/refit-junction-cards.test.js
 test/refit-footprint.test.js
 test/refit-run-gate.test.js
@@ -703,6 +717,7 @@ test/opensource-readiness.test.js
 test/source-release-mirror.test.js
 test/release-train-chrome-warmup.test.js
 test/release-train-provenance.test.js
+test/frontend-dist-staging.test.js
 test/desktop-build-macos-notarization.test.js
 test/desktop-artifact-open.test.js
 test/release-train-macos-trust.test.js
@@ -755,6 +770,7 @@ test/emergency-control.test.js
 test/work-rating-control.test.js
 
 test/session-focus-safety.test.js
+test/session-typing-safety.test.js
 
 test/harness-placement.test.js
 test/github-device.test.js
@@ -778,3 +794,32 @@ test/cloudsave-concurrency.test.js
 
 test/sprite-direction-details.test.js
 test/chat-history-reconcile.test.js
+
+test/prop-industrial-remaster.test.js
+test/industrialtextures.test.js
+test/world-texture-ready.test.js
+test/qa-claims-blob-batch.test.js
+test/qa-claims-search-batch.test.js
+test/workstation-screen-state.test.js
+test/prop-remaster-contract.test.js
+test/authored-prop-content.test.js
+test/authored-prop-motion.test.js
+test/authored-machine-config.test.js
+test/authored-service-content.test.js
+test/coordinated-prop-recipes.test.js
+test/routing-label-layout.test.js
+test/prop-layout-polish.test.js
+test/skin-study-tone.test.js
+test/skin-study-preview.test.js
+test/projection-prop-effects.test.js
+test/projection-load-geometry.test.js
+dev/industrial-textures/prop-catalog-review.test.cjs
+test/projection-depth-rendering.test.js
+test/station-templates.test.js
+test/remaster-physical-fit.test.js
+test/arrival.test.js
+
+test/genesis-wake-credential.test.js
+test/dossier-growth-live.test.js
+test/industrial-shells.test.js
+test/refit-bake-reuse.test.js

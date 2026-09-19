@@ -1878,7 +1878,8 @@ const App = (() => {
     const isOAuth = isOAuthProviderId(pickedProvider);
     const keyBlock = el('key-block'), keyInput = el('in-key');
     const baseBlock = el('base-url-block'), baseInput = el('in-base-url');
-    const configured = !!(Harness.configured && Harness.configured(pickedProvider));
+    // DEV auto-resume eligibility is not proof of a credential for the chosen provider.
+      const configured = !!(Harness.hasStoredCredential && Harness.hasStoredCredential(pickedProvider));
     keyBlock.classList.toggle('hidden', !providerUsesKeyBox(pickedProvider));
     if (keyInput) {
       keyInput.value = Harness.getKey ? Harness.getKey(pickedProvider) : '';
@@ -2272,7 +2273,7 @@ const App = (() => {
       const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
       if (invoke) await invoke('harness_clear_credits_token');
       const response = await Harness.api.post('/api/credits/unlink', {});
-      if (!response || !response.ok || (response.j && response.j.ok === false)) throw new Error('unlink refused');
+      if (!response || !response.ok || !response.j || response.j.ok !== true || response.j.unlinked !== true) throw new Error('unlink refused');
       if (Harness.refreshCreditsConfigured) await Harness.refreshCreditsConfigured();
       starnetLinked = false; starnetBalanceUsd = null; starnetPurchaseUrl = ''; starnetLinkStatus = '';
       if (switchBtn) { switchBtn.classList.add('hidden'); switchBtn.disabled = false; }
@@ -2728,6 +2729,10 @@ const App = (() => {
       }
       return false;
     }
+    // Which credential the wire test is about to ride, in the Commander's words — the merged OPENAI card has
+    // two doors (ChatGPT sign-in vs API key) and a dead-wire error that doesn't name the door sends people
+    // re-signing-in to ChatGPT when the request never left on it.
+    let wireVia = '';
     if (pickedProvider === 'starnet') {
       // MONEY TRUTH MUST BE FRESH AT THE DECISION. The screen's painted balance can predate a purchase or a
       // relink; using that cached $0 here stranded a funded customer even though /v1/balance already held the
@@ -2746,17 +2751,19 @@ const App = (() => {
     } else if (isOAuthProviderId(pickedProvider)) {
       if (!oauthConnected[pickedProvider]) { msg.textContent = 'sign in with ' + OAUTH_GENESIS[pickedProvider].name + ' first, or switch to OpenRouter.'; return false; }
       Harness.setModel(model); Harness.setProv(pickedProvider);
-    } else if (pickedProvider === 'openai' && !el('in-key').value.trim() && !(Harness.configured && Harness.configured('openai')) && codexConnected) {
-      // THE MERGED OPENAI CARD, ChatGPT half: no key typed, no stored OpenAI credential, but a LIVE ChatGPT
-      // sign-in — the sign-in IS the credential, so this wake rides the codex path. A typed key always wins
-      // (explicit beats ambient) and falls through to the key branch below.
+    } else if (pickedProvider === 'openai' && !el('in-key').value.trim() && codexConnected) {
+      // MERGED OPENAI CARD, ChatGPT half: a LIVE sign-in with no key TYPED rides codex. A typed key wins
+      // (explicit beats ambient); a key merely STORED does NOT — the green card is what the Commander sees,
+      // this screen can't remove a stored key, and it stranded a Plus subscriber on an API 429 (09-16).
       Harness.setModel(model); Harness.setProv('codex');
+      wireVia = 'your ChatGPT sign-in';
     } else {
       const key = el('in-key').value.trim();
       if (providerNeedsBaseUrl(pickedProvider)) {
         if (Harness.setBaseUrl) await Harness.setBaseUrl(baseUrl, pickedProvider);
       }
-      const configured = !!(Harness.configured && Harness.configured(pickedProvider));
+      // DEV auto-resume eligibility is not proof of a credential for the chosen provider.
+      const configured = !!(Harness.hasStoredCredential && Harness.hasStoredCredential(pickedProvider));
       if (providerNeedsKey(pickedProvider) && !key && !configured) {
         // COLD-START guidance: a new user has no key AND no idea where to get one. Name the provider and link
         // the exact page that mints a key (from providerSignupUrl — same destinations the placeholder hints at).
@@ -2782,6 +2789,7 @@ const App = (() => {
       // setKey is async in desktop (writes the keychain + pushes it to the sidecar); await so the run has it.
       if (key) await (Harness.validateAndSetKey ? Harness.validateAndSetKey(key, pickedProvider) : Harness.setKey(key, pickedProvider));
       Harness.setModel(model); Harness.setProv(pickedProvider);
+      if (pickedProvider === 'openai') wireVia = key ? 'the OpenAI API key you typed' : 'the OpenAI API key stored on this station';
     }
 
     // V3 LAW — THE WIRE IS PROVEN AT THE DOOR (Andrew, 2026-07-19): the awakening AUTHORS this agent's whole
@@ -2804,7 +2812,7 @@ const App = (() => {
         refreshStarnetGenesisStatus();
         return false;
       }
-      msg.textContent = 'your model didn’t answer — ' + wire.why + '. fix it here, then WAKE again; the awakening won’t start on a dead wire.';
+      msg.textContent = 'your model didn’t answer' + (wireVia ? ' (via ' + wireVia + ')' : '') + ' — ' + wire.why + '. fix it here, then WAKE again; the awakening won’t start on a dead wire.';
       return false;
     }
     msg.textContent = '';
@@ -2959,7 +2967,7 @@ const App = (() => {
     if (typeof PropSprites !== 'undefined' && WorldModel.setPropRules) {
       WorldModel.setPropRules((t) => {
         const s = PropSprites.spec(t);
-        return s ? { mount: s.mount || null, stack: !!s.stack, surface: !!s.surface, flat: !!s.flat } : null;
+        return s ? { mount: s.mount || null, stack: !!s.stack, surface: !!s.surface, flat: !!s.flat, footprintMigration:s.footprintMigration } : null;
       });
     }
     // STATION IDENTITY: did the save we are loading already carry one? (worldmodel stamps meta.createdAt
@@ -3180,6 +3188,7 @@ const App = (() => {
     // a "build it" into a real run. SuggestStore is the recurring counterpart that fires as the dossier grows.
     const adviceDeps = {
       getSystem: () => agent ? agent.systemPrompt : '',
+      getPurpose: () => agent ? ((agent.docs && agent.docs.purpose) || agent.purpose || '') : '',
       getName: () => agent ? agent.name : 'AGENT',
       getCaps: () => ((typeof World !== 'undefined' && World.heroCaps) ? World.heroCaps('agent') : []).map(c => (typeof c === 'string' ? { id: c, label: c } : c)),
       // was the run that just ended a REAL task (tools available), not casual chat? Chat's run-meta ledger records
@@ -3205,7 +3214,7 @@ const App = (() => {
       // UNION (see the goal-milestone twin above): derived title from the directive + returns TRUE only when a
       // run really kicked off — the suggestion's attribution stamp is armed off this answer, so a busy stream
       // must report the no-op honestly.
-      launchDirective: (text) => { const ws = (typeof Workstreams !== 'undefined') ? Workstreams.create((Workstreams.deriveTitle && Workstreams.deriveTitle(text)) || 'First build', { kind: 'task' }) : null; if (ws && typeof Chat !== 'undefined' && Chat.load) Chat.load(ws); let sent = false; if (typeof Chat !== 'undefined' && Chat.send && !Chat.isBusy()) { Chat.send(text); sent = true; } persist(); return sent; }
+      launchDirective: (text) => { if (typeof Chat === 'undefined' || !Chat.send || Chat.isBusy()) return false; const ws = (typeof Workstreams !== 'undefined') ? Workstreams.create((Workstreams.deriveTitle && Workstreams.deriveTitle(text)) || 'First build', { kind: 'task' }) : null; if (ws && typeof Chat !== 'undefined' && Chat.load) Chat.load(ws); let sent = false; if (typeof Chat !== 'undefined' && Chat.send && !Chat.isBusy()) { Chat.send(text); sent = true; } persist(); return sent; }
     };
     if (typeof PitchStore !== 'undefined') PitchStore.init(adviceDeps);
     if (typeof SuggestStore !== 'undefined') SuggestStore.init(adviceDeps);

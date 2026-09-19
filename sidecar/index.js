@@ -55,7 +55,7 @@ const docExtract = require('./tools/builtin/docextract.js').makeDocExtract({ inf
 // ...and the same idea for pixels: ONE sniffer shared by every producer that can hand the driving model an
 // image, so the `images` channel has more than a single caller (a channel with one caller is a special case).
 const imageWire = require('./tools/builtin/imagewire.js').makeImageWire({});
-const { makeNotebookTools } = require('./tools/builtin/notebook.js');
+const { makeNotebookTools, reviseRecord } = require('./tools/builtin/notebook.js');
 const { makeRecallTool } = require('./tools/builtin/recall.js');
 const { makeToolSearchTool } = require('./tools/builtin/toolsearch.js');   // tool.search: reach a granted-but-unadvertised (deferred) tool
 const CodeMode = require('./tools/builtin/code.js');                      // code.run: bounded JS composition over this run's read-only grants
@@ -2474,7 +2474,7 @@ async function runReflection(o) {
     let proposals = (out && out.proposals) || [];
     // CROSS-WIRE: reflect() already deduped THIS agent's own notebook declines; drop anything the Commander declined
     // in ANOTHER surface (a mined thread / a quest title / a study belief / a north star) so it isn't re-remembered.
-    if (proposals.length) { const dIdx = buildDeclinedIndex(agentId); proposals = proposals.filter(p => p && !dIdx.has(p.content)); }
+    if (proposals.length) { const dIdx = buildDeclinedIndex(agentId); proposals = proposals.filter(p => p && (p.replaceId || !dIdx.has(p.content))); }
     if (proposals.length) {
       // arm the cooldown ONLY when a beat actually fires — so a trivial/floored/all-deduped run (zero proposals)
       // never spends the window and blocks a following substantive run's turn-in (honours "always confirm").
@@ -2484,7 +2484,7 @@ async function runReflection(o) {
       // (credentials / PII / standing instructions) are NOT auto-saved — they still stash + emit memory.proposed
       // so the old Keep/Edit/Discard confirm deck fires for just those (rare-confirm).
       const highStakesProps = [], normalProps = [];
-      for (const p of proposals) (highStakes(p.content) ? highStakesProps : normalProps).push(p);
+      for (const p of proposals) (p.replaceId || highStakes(p.content) ? highStakesProps : normalProps).push(p);
 
       // auto-save the normal ones. Silent save = NEUTRAL trust (trustDelta 0): there was no user validation to
       // reward (the +2 keep bonus was the Commander confirming). Skills go to the skill library as before.
@@ -2499,7 +2499,8 @@ async function runReflection(o) {
       // prop_N id). The frontend fetches it via /api/memory/proposals — renders a passive receipt for saved:true
       // items and the Keep/Edit/Discard confirm deck for the rest. A single stash per runId (a second stashProposals
       // for the same runId would OVERWRITE the first — so merge here).
-      const pending = highStakesProps.map(p => ({ id: p.id, kind: p.kind, content: p.content, scope: p.scope || 'global', origin: origin }));
+      const pending = highStakesProps.map(p => ({ id: p.id, kind: p.kind, content: p.content, scope: p.scope || 'global', origin: origin,
+        ...(p.replaceId ? { replaceId: p.replaceId, previousBody: p.previousBody, streamId: p.streamId || null } : {}) }));
       const combined = saved.concat(pending);
       if (combined.length) stashProposals(agentId, runId, combined);
       // ...and queue the high-stakes half DURABLY. The in-memory stash serves the live receipt/deck render; this
@@ -7322,6 +7323,9 @@ async function modelUpdateLoop(id, rawPatch) {
 async function modelControlLoop(id, action, reason) {
   if (loopReviewBusy(id)) throw new Error('Review in progress; retry when it finishes');
   if (!loopjobStore.getLoop(loopJobs, id)) throw new Error('no such loop');
+  if (!['pause', 'resume', 'stop'].includes(action)) throw new Error('unknown loop control');
+  // Settle the host-owned iteration before deriving the quiet state, exactly as the HTTP control does.
+  if (action !== 'resume') loopDriver.abortLease(id, reason || (action === 'stop' ? 'stopped by the Commander' : 'paused by the Commander'));
   const now = Date.now();
   let candidate;
   if (action === 'pause') candidate = loopjobStore.pauseLoop(loopJobs, id, reason || 'paused by the Commander', { now });
@@ -7329,10 +7333,6 @@ async function modelControlLoop(id, action, reason) {
   else if (action === 'stop') candidate = loopjobStore.stopLoop(loopJobs, id, reason, { now });
   else throw new Error('unknown loop control');
   commitLoops(candidate);
-  if (action !== 'resume') {
-    const lease = loopDriver.leases.get(id);
-    try { if (lease && lease.abort && typeof lease.abort.abort === 'function') lease.abort.abort(); } catch (_) {}
-  }
   armLoops(true);
   return modelLoopRow(id);
 }
@@ -7340,8 +7340,7 @@ async function modelControlLoop(id, action, reason) {
 async function modelRemoveLoop(id) {
   if (loopReviewBusy(id)) throw new Error('Review in progress; retry when it finishes');
   if (!loopjobStore.getLoop(loopJobs, id)) throw new Error('no such loop');
-  const lease = loopDriver.leases.get(id);
-  try { if (lease && lease.abort && typeof lease.abort.abort === 'function') lease.abort.abort(); } catch (_) {}
+  loopDriver.abortLease(id, 'removed by the Commander');
   commitLoops(loopjobStore.removeLoop(loopJobs, id));
   if (loopjobStore.getLoop(loopJobs, id)) throw new Error('loop durable read-back still contains the removed loop');
   if (!anyLiveLoop()) disarmLoops();
@@ -11981,6 +11980,7 @@ async function createCronJobFromSpec(body) {
     if (!String(body.prompt || '').trim() && !body.script) throw new Error('a routine needs a prompt (or a script)');
     if (body.script) cronScriptSpec({ id: 'validate', agentId, script: body.script, workdir: body.workdir, unattendedGrants: body.unattendedGrants });
     const mode = String(body.deliver || 'local');
+    if (String(body.deliver || 'local').trim() === 'local' && body.attachToSession && !(body.origin && (body.origin.sessionId || body.origin.streamId))) throw new Error('follow-up needs a captured session origin');
     if (mode === 'origin' && !(body.origin && (body.origin.target || (body.origin.channel && body.origin.chatId) || body.origin.sessionId || body.origin.streamId))) throw new Error('origin delivery needs a captured channel or session origin');
     if (mode.indexOf('targets:') === 0) for (const target of mode.slice(8).split(',').map(s => s.trim()).filter(Boolean)) if (!channelStore.getChatRecord(target)) throw new Error('unknown chat target ' + target);
     if (mode === 'all') { const map = channelStore.loadChatMap(); body.deliver = 'targets:' + Object.keys((map && map.chats) || {}).slice(0, 16).join(','); }
@@ -12076,6 +12076,7 @@ function handleCronUpdate(req, res) {
       }
       if (Object.prototype.hasOwnProperty.call(patch, 'workdir')) patch.workdir = cronCanonicalWorkdir(patch.workdir);
       const candidate = Object.assign({}, current, patch);
+      if (String(candidate.deliver || 'local').trim() === 'local' && candidate.attachToSession && !(candidate.origin && (candidate.origin.sessionId || candidate.origin.streamId))) throw new Error('follow-up needs a captured session origin');
       if (candidate.noAgent && !candidate.script) throw new Error('script-only routines require a script');
       if (candidate.script) cronScriptSpec(candidate);
     } catch (e) { return json(400, { error: (e && e.message) || String(e) }); }
@@ -12085,6 +12086,8 @@ function handleCronUpdate(req, res) {
       // G4.3: the full edit (updateJob + optional pause/resume) is ONE re-read-modify-write under the lock,
       // so it cannot clobber a concurrent advance and the pause/resume sees the just-updated job.
       await withCronWrite(jobs => {
+        const candidate = Object.assign({}, cronStore.getJob(jobs, id), patch);
+        if (String(candidate.deliver || 'local').trim() === 'local' && candidate.attachToSession && !(candidate.origin && (candidate.origin.sessionId || candidate.origin.streamId))) throw new Error('follow-up needs a captured session origin');
         let next = cronStore.updateJob(jobs, id, patch, { now: Date.now(), defaultTz: CRON_HOST_TZ });
         if (enabled === true) next = cronStore.resumeJob(next, id, { now: Date.now(), defaultTz: CRON_HOST_TZ });
         else if (enabled === false) next = cronStore.pauseJob(next, id);
@@ -15611,7 +15614,13 @@ async function runOnce(o) {
     classes: SPECIALIST_CLASSES,   // Class Loadouts S1: the summon-tool class list, composed from the shared catalog (no hardcoded prose)
     selfSystem: system,   // team.spawn clones the LEAD's OWN base identity into each ephemeral subagent (Meeseeks)
     taskContext: taskContextBlock,   // workers inherit settled task decisions without re-questioning the Commander
-    getTaskContext: () => taskBriefState ? commanderEvidenceContext(system || '', Object.assign({},taskContextInputs,{brief:taskBriefState.brief})) : taskContextBlock,
+    getTaskContext: () => {
+      const settled = taskBriefState ? commanderEvidenceContext(system || '', Object.assign({},taskContextInputs,{brief:taskBriefState.brief})) : taskContextBlock;
+      const notes = notebookStore.get('notebook:' + agentId);
+      const pinned = Array.isArray(notes) ? notes.filter(r => r && r.pinned) : [];
+      const recalled = renderRecall(rank(pinned, recentUserText(messages), { now: Date.now(), streamId, projectRoot: o.projectRoot || null }), { limit: 1500 });
+      return settled + (recalled.text ? '\n\n' + redact(recalled.text) : '');
+    },
     // A worker shares the LEAD's consent broker (see the `consent` note below), so its own roster APPROVAL clause is
     // the wrong one whenever the two postures differ. Hand orchestration the EFFECTIVE posture so the delegated
     // prompt states what will actually happen. A thunk read off the live roster: computed at dispatch time, and
@@ -15668,6 +15677,7 @@ async function runOnce(o) {
       if (gate.reason === 'declined') return { _declined: true, name: spec.name };
       const id = crypto.randomUUID();
       const schedule = parseCronScheduleOr400(spec.schedule, Date.now(), spec.timezone);
+      if (String(spec.deliver || 'local').trim() === 'local' && spec.attachToSession && !(spec.origin && (spec.origin.sessionId || spec.origin.streamId))) throw new Error('follow-up needs a captured session origin');
       const skillRefs = cronStringList(spec.skills, 8, /^[A-Za-z0-9_. -]{1,120}$/);
       for (const ref of skillRefs) if (!skillStore.view(spec.agentId, ref, { bump: false })) throw new Error('unknown runtime skill "' + ref + '" for ' + spec.agentId);
       const contextRefs = cronStringList(spec.contextFrom, 8, /^[A-Za-z0-9_-]{1,40}$/);
@@ -15721,7 +15731,11 @@ async function runOnce(o) {
       if (Object.prototype.hasOwnProperty.call(patch, 'schedule')) {
         next.schedule = parseCronScheduleOr400(patch.schedule, Date.now(), patch.timezone);
       }
-      await withCronWrite(jobs => cronStore.updateJob(jobs, id, next, { now: Date.now(), defaultTz: CRON_HOST_TZ }));
+      await withCronWrite(jobs => {
+        const candidate = Object.assign({}, cronStore.getJob(jobs, id), next);
+        if (String(candidate.deliver || 'local').trim() === 'local' && candidate.attachToSession && !(candidate.origin && (candidate.origin.sessionId || candidate.origin.streamId))) throw new Error('follow-up needs a captured session origin');
+        return cronStore.updateJob(jobs, id, next, { now: Date.now(), defaultTz: CRON_HOST_TZ });
+      });
       return cronStore.getJob(cronJobs, id);
     },
     removeRoutine: async (id) => {
@@ -16277,13 +16291,9 @@ async function runOnce(o) {
     if (fbManaged !== managedRun) continue;
     let fbProvider;
     if (providerUsesCodex(fbProviderId)) {
-      let fbToken;
-      try { fbToken = await ensureCodexAccessToken(); } catch (_) { continue; }
-      fbProvider = selectProvider({ provider: fbProviderId, fetch: globalThis.fetch, token: fbToken, renewToken: forceRefreshCodexAccessToken, baseUrl: fbBaseUrl, reasoningEffort });
+      fbProvider = selectProvider({ provider: fbProviderId, fetch: globalThis.fetch, tokenProvider: ensureCodexAccessToken, renewToken: forceRefreshCodexAccessToken, baseUrl: fbBaseUrl, reasoningEffort });
     } else if (providerUsesDeviceOAuth(fbProviderId)) {
-      let fbToken;
-      try { fbToken = await ensureOAuthAccessToken(fbProviderId); } catch (_) { continue; }
-      fbProvider = selectProvider({ provider: fbProviderId, fetch: globalThis.fetch, token: fbToken, headers: oauthInferenceHeaders(fbProviderId), baseUrl: fbBaseUrl, reasoningEffort });
+      fbProvider = selectProvider({ provider: fbProviderId, fetch: globalThis.fetch, tokenProvider: () => ensureOAuthAccessToken(fbProviderId), headersProvider: () => oauthInferenceHeaders(fbProviderId), baseUrl: fbBaseUrl, reasoningEffort });
     } else {
       fbProvider = selectProvider({ provider: fbProviderId, fetch: globalThis.fetch, key: fbKey, baseUrl: fbBaseUrl, reasoningEffort });
     }
@@ -16351,7 +16361,7 @@ async function runOnce(o) {
       // '' when nothing to preserve. Fail-open: a memory hiccup must never block the summary.
       try {
         const recs = notebookStore.get('notebook:' + agentId);
-        if (Array.isArray(recs) && recs.length) return compactionMemoryBlock(recs, transcript, { now: Date.now(), k: 5, limit: 800, streamId: o.streamId || null });
+        if (Array.isArray(recs) && recs.length) return compactionMemoryBlock(recs, transcript, { now: Date.now(), k: 5, limit: 800, streamId: o.streamId || null, projectRoot: o.projectRoot || null });
       } catch (_) {}
       return '';
     }
@@ -16861,7 +16871,7 @@ async function runOnce(o) {
       + (hasWebTools ? 'Ground every current factual claim in what web_search / web_fetch actually return, and cite the source URLs; ' : '')
       + 'do not invent facts, figures, or links. '
       + (hasWriteTools ? 'Save substantive deliverables (reports, code, notes) to your workspace with fs_write / fs_append. ' : '')
-      + (hasNotebookWrite ? 'Record durable facts you\'ll want later with notebook_write. ' : '')
+      + (hasNotebookWrite ? 'Save explicit preferences, corrections, and approved reusable design requirements with notebook_write before claiming they are remembered. Read an existing memory before correcting it; use replaceId and previousBody to update it rather than appending an opposite fact. Pin approved requirements within their intended scope, retain artifact/reference paths, and re-read approved artifacts before making variants. Current user instructions override recalled context. ' : '')
       + workDisciplineNote
       + (hasShellExec ? 'Do not guess Bash-style /c paths for Windows when the Commander gave you a real Windows path. ' : '')
       + (hasWriteTools ? 'Saving a file shows the Commander a quick one-click approval prompt — so just CALL the write tool when you are ready; do not ask permission in chat or claim you cannot save. If they decline, carry on without it. ' : '')
@@ -16874,7 +16884,12 @@ async function runOnce(o) {
   // the browser pushed via /api/roster) AND SUMMON new specialists (team.summon). Only the lead gets this (it alone
   // gets the orchestrator object above); a non-lead worker stays byte-identical (empty) so it can never re-delegate.
   let teamNote = '';
-  if (o.lead) {
+  // CHAT DIET (2026-09-15, issue #17): a non-task turn ("hello", an ack, a question about the agent itself) has NO
+  // tools on the wire, so a briefing that says "call team.dispatch" would describe a capability the model does not
+  // have this turn. It also cost ~2.6KB of prefill on every greeting — on a 3B local model that is real seconds.
+  // Describe the granted tools, not the caller's desktop-only lead flag. Trusted owner
+  // channel tasks receive orchestration above; workers and disabled toolsets do not.
+  if (isTask && resolved.tools.includes('team.dispatch')) {
     teamNote = '\n\n[ORCHESTRATION] You are the lead orchestrator. You can build and direct a crew for the Commander:';
     const lines = [];
     // S3: each crew line carries that specialist's EARNED track record when it has one (browser-computed,
@@ -16941,18 +16956,25 @@ async function runOnce(o) {
     // Class Loadouts S1: union the running agent's per-agent class SKILL PACKAGE (roster record) with the global
     // prefs — ADD-only (see catalog.compose). Still gated by the station gear + the budget; package composes first.
     const agentSkills = (rosterIdent && Array.isArray(rosterIdent.skills)) ? rosterIdent.skills : [];
-    skillBlock = skillsCatalog.compose(SKILL_LIBRARY, { overrides: skillPrefs.overrides(), placedTypes: skillPlacedTypes, agentSkills: agentSkills });
+    // CHAT DIET: recipes are for WORK. A greeting shipped ~12KB of skill bodies (5 library skills are default-on with
+    // no gear requirement) to every provider, and a 3B local model spent minutes re-reading them before saying hi.
+    skillBlock = isTask
+      ? skillsCatalog.compose(SKILL_LIBRARY, { overrides: skillPrefs.overrides(), placedTypes: skillPlacedTypes, agentSkills: agentSkills })
+      : '';
   } catch (_) { /* a skill-injection hiccup must never break a run */ }
   // STARNET OPERATOR MANUAL: how the station works, so the agent can guide a stuck Commander. Interactive
   // only (same gate as capsummary — a Commander is present to help and the build UI exists). Sits right
   // BEFORE the authoritative <capabilities_ground_truth>, which it defers to, so the two never disagree.
-  const manualBlock = (surface === 'interactive') ? starnetManual() : '';
+  // CHAT DIET: ~9KB. Gated on isTask too — a 'how do I …' question classifies as a task (classify.js defaults to
+  // task), so the manual still reaches the turns that need it; a bare greeting or ack does not pay for it.
+  const manualBlock = (isTask && surface === 'interactive') ? starnetManual() : '';
   const runtimeVersion = computeVersionSurface();
   const runtimeBlock = runtimeIdentityBlock({ provider: providerId, model, agentId, runId, surface, trigger, fallbackModels, harness: runtimeVersion.harness, app: runtimeVersion.app });
   // RUNTIME SKILL LIBRARY (skill-builder-gap): index the agent's own authored skills + preload any it invokes,
   // riding the same skill.view/skill.manage capability gate. Never breaks a run.
   try {
-    if (resolved.tools.indexOf('skill.view') >= 0) {
+    // CHAT DIET: the index exists so the model can CALL skill.view; on a non-task turn no tool is on the wire.
+    if (isTask && resolved.tools.indexOf('skill.view') >= 0) {
       const rs = runtimeSkills.composeIndex(skillStore.list(agentId), {
         budget: 6000,
         platform: process.platform,
@@ -17083,10 +17105,14 @@ async function runOnce(o) {
      A byte-stable constant, so it never shifts the cached system prefix. */
   const canName = !!(resolved && Array.isArray(resolved.tools) && resolved.tools.indexOf('deliverable_note') >= 0);
   const deliverableNote = canName ? DELIVERABLE_NOTE_CLAUSE : '';
-  const taskSystem = FinishLine.append((system || '') + runtimeBlock + toolNote + teamNote + manualBlock
-    + summarizeCapabilities(resolved, { surface, ownerTrusted, unrestrictedHost: unrestrictedHostNow() }) + skillBlock + runtimeSkillBlock
+  // Cache only the reusable prefix across runs. All task-specific context still follows verbatim;
+  // the explicit Claude boundary precedes changing context, while runtime identity remains last
+  // for generic providers that automatically reuse matching prefixes.
+  const cacheSystemPrefix = (system || '') + toolNote + teamNote + manualBlock
+    + summarizeCapabilities(resolved, { surface, ownerTrusted, unrestrictedHost: unrestrictedHostNow() }) + skillBlock;
+  const taskSystem = FinishLine.append(cacheSystemPrefix + runtimeSkillBlock
     + preloadedSkillBlock + serviceKeysBlock + taskIntentNote + directDomainBlock + journeyBlock
-    + deliverableNote, { isTask, internal, tools: resolved.tools });
+    + deliverableNote + runtimeBlock, { isTask, internal, tools: resolved.tools });
   const sys = internal
     ? (String(system || '') + evidenceBlock)
     : withQuests(taskSystem, questsBlock);   // ground-truth caps + task-context doctrine share the one final prompt seam
@@ -17129,8 +17155,8 @@ async function runOnce(o) {
   if (!internal) try {
     const stored = notebookStore.get('notebook:' + agentId);
     const recs = o.recovery ? [] : (Array.isArray(stored) ? stored : []);
-    const q = recentUserText(messages);   // last up-to-3 user turns (attachment turns flattened to THEIR text) — a bare "yes, do that" still ranks against the ask it answers
-    const ranked = rank(recs, q, { now: Date.now(), streamId });   // M-mem.2b: boost the active workstream's working memory
+    const q = recentUserText(convo);   // include restored conversation context on terse post-restart follow-ups
+    const ranked = rank(recs, q, { now: Date.now(), streamId, projectRoot: o.projectRoot || null });
     const recall = renderRecall(ranked, { limit: 1500 });
     if (recall.text) {
       msgs = injectRecall(msgs, redact(recall.text));   // §5.6 belt-and-suspenders: a legacy plaintext note can't reach the provider verbatim
@@ -17285,6 +17311,8 @@ async function runOnce(o) {
       result = {reason:'done', turns:0, usd:0, messages:msgs.concat([{role:'assistant', content:text}])};
     } else result = await runAgentLoop({
       messages: msgs, provider, emit: loopEmit, cost, tools: o.outputOnly ? [] : toolDefs, dispatch, capCtx,
+      isTask: internal ? undefined : isTask,
+      cacheSystemPrefix: !internal && !o.recovery ? cacheSystemPrefix : '',
       drainToolCosts: () => pendingMediaCosts.splice(0),
       acceptanceProbe,
       // Granted but unadvertised: held out of the request until tool.search reveals one (see loop.js).
@@ -17312,6 +17340,9 @@ async function runOnce(o) {
       // operator's narrowly authorized continuation and make the recovery non-idempotent.
       limits: {
         maxIters: o.outputOnly ? 1 : runMaxIters, maxCostUsd: runCapUsd, failureRecovery: (o.recovery || o.outputOnly) ? false : undefined,
+        // A capped greeting must not become five paid generations. Task replies retain normal
+        // continuation, including brief answers promoted to tasks by a pending clarification.
+        outputContinuation: !isTask && !internal ? false : undefined,
         grace: o.outputOnly ? false : undefined, refundMax: o.outputOnly ? 0 : undefined,
         // unpriced-token seatbelt: metered API-key providers only — a subscription/OAuth/unmetered run bills nothing
         maxUnpricedTokens: (providerUnmetered || usingCodex || usingDeviceOAuth) ? Infinity : CAPS.maxUnpricedTokens
@@ -17469,7 +17500,7 @@ async function runOnce(o) {
         }
       }
       const runEndedAt = Date.now();
-      runStore.record({ runId, parentRunId: o.parentRunId || '', agentId, provider: activeProviderId, reason: ((result && result.reason) || 'done'), clarifying: taskQuestionAsked, turns: finalTurns, tokens: finalTokens, usd: finalUsd, title: title, streamId: o.streamId || '', sessionTitle: o.sessionTitle || '', deliveryPrompt: o.sessionPrompt || '', deliveryText, recipeId: o.recipeId || '', projectRoot: o.projectRoot || '', deliverable: deliverableNotes.take(runId), model: finalModel, reasoningEffort, unmetered: runUnmetered && mediaUsd === 0, artifacts: execution.artifactList(), toolsOk: execution.toolsOk(), toolTrace: execution.toolTraceList(), failureStage: execution.failureStage(), failureCode: execution.failureCode(), uncertainMutations: execution.uncertainMutations(), completionEvidence: finalCompletionEvidence, recoveryAttempts: execution.recoveryAttempts(), startedAt: runStartedAt, endedAt: runEndedAt, durationMs: runEndedAt - runStartedAt, identityFallback, internal });   // execution terminal stays separate from the neutral Task Brief outcome used by progression
+      runStore.record({ runId, parentRunId: o.parentRunId || '', agentId, provider: activeProviderId, reason: ((result && result.reason) || 'done'), clarifying: taskQuestionAsked, turns: finalTurns, tokens: finalTokens, usd: finalUsd, title: title, streamId: o.streamId || '', sessionTitle: o.sessionTitle || '', deliveryPrompt: o.sessionPrompt || '', deliveryText, recipeId: o.recipeId || '', projectRoot: o.projectRoot || '', deliverable: deliverableNotes.take(runId), model: finalModel, reasoningEffort, unmetered: runUnmetered && mediaUsd === 0, artifacts: execution.artifactList(), toolsOk: execution.toolsOk(), toolTrace: execution.toolTraceList(), failureStage: execution.failureStage(), failureCode: execution.failureCode(), uncertainMutations: execution.uncertainMutations(), completionEvidence: finalCompletionEvidence, recoveryAttempts: execution.recoveryAttempts(), startedAt: runStartedAt, endedAt: runEndedAt, durationMs: runEndedAt - runStartedAt, identityFallback, internal, surface });   // execution terminal stays separate from the neutral Task Brief outcome used by progression
 
       // P0.1/H1.1: persist the full DIALOGUE (not just the outcome) — a durable server-side transcript for EVERY
       // run, incl. headless ones (cron/Telegram/delegated). Append the triggering user directive, then EVERY new
@@ -19414,6 +19445,7 @@ function handleCodexStatus(req, res) {
 function publicModel(m) {
   return {
     id: m.id,
+    fallback: !!m.fallback,
     name: m.name || m.id,
     context_length: m.context_length || 0,
     max_completion_tokens: m.max_completion_tokens || null,
@@ -19567,6 +19599,7 @@ async function handleCodexModels(req, res) {
     // The bare `id` is still present on every entry, so older consumers that read m.id keep working.
     const rich = models.map(m => ({
       id: m.id,
+      fallback: !!m.fallback,
       displayName: m.displayName || m.name || m.id,
       description: m.description || '',
       context_length: m.context_length || 0,
@@ -19960,11 +19993,13 @@ async function handleGrowthRatings(req, res) {
   if (Math.max(1, Math.floor(Number(body.epoch) || 1)) !== epoch) return json(409, { ok: false, error: 'station generation changed; reload before rating' });
   const allRows = runStore.all();
   const lead = allRows.find(r => r && r.runId === runId);
-  if (!lead || lead.internal || contextpack.isInternalStream(lead.streamId)) return json(404, { ok: false, error: 'rateable run not found' });
+  if (!lead) return json(404, { ok: false, error: 'rateable run not found' });
+  if (lead.internal) return json(409, { ok: false, error: 'internal run cannot be rated' });
+  if (isInternalRun(lead)) return json(409, { ok: false, error: lead.surface === 'autonomous' ? 'non-interactive run cannot be rated' : 'run origin unavailable for rating' });
   if (lead.clarifying || !new Set(['done', 'max_iters', 'budget', 'refusal']).has(String(lead.reason || ''))) {
     return json(409, { ok: false, error: 'run did not produce rateable agent work' });
   }
-  const children = allRows.filter(row => row && row.parentRunId === runId && !row.internal && !contextpack.isInternalStream(row.streamId));
+  const children = allRows.filter(row => row && row.parentRunId === runId && !isInternalRun(row));
   const canonical = deriveGrowthRating(lead, children, body.verdict);
   if (!canonical) return json(400, { ok: false, error: 'invalid rating verdict' });
   canonical.epoch = epoch;
@@ -20040,10 +20075,15 @@ function withRunChildren(row, allRows) {
     .map(withRunTruth);
   return out;
 }
+function isInternalRun(row) {
+  // A Commander can continue a scheduled conversation. Its stream prefix describes
+  // the conversation, while the host-recorded surface describes this particular run.
+  // Legacy rows lack that evidence; retain their conservative prefix classification.
+  return !!row.internal || (row.surface !== 'interactive' && contextpack.isInternalStream(row.streamId));
+}
 function withRunTruth(row) {
   const out = Object.assign({}, row);
-  // Rows written before the explicit marker existed still carry canonical internal stream prefixes.
-  out.internal = !!out.internal || contextpack.isInternalStream(out.streamId);
+  out.internal = isInternalRun(out);
   return out;
 }
 /* GOLDEN-RUN DRIFT (2026-08-22): every recipe's latest run compared against its own good history, computed from
@@ -20419,7 +20459,8 @@ function serveTranscript(req, res) {
     if (!isAgentId(agent)) return json(403, { error: 'forbidden' });
     const stream = u.searchParams.get('stream') || 'global';
     const limit = Math.max(1, Math.min(500, Number(u.searchParams.get('limit')) || 200));
-    json(200, { stream, turns: transcriptStore.history(stream, { limit }) });
+    const sourceRunId = u.searchParams.get('runId') || '';
+    json(200, { stream, turns: transcriptStore.history(stream, { limit, sourceRunId }) });
   } catch (e) { json(500, readRouteFailure('transcript', e)); }   // broken ≠ empty: every reader gates on r.ok (autosessions/chat/returnstore)
 }
 
@@ -20641,7 +20682,7 @@ async function writeMemoryRecord(agentId, prop, opts) {
   const runId = opts.runId || (prop && prop.sourceRunId) || '';
   const trustDelta = Number(opts.trustDelta) || 0;
   // skill-builder-gap: a proposal tagged kind:'skill' becomes a saved skill package, not a notebook note.
-  if (prop && prop.kind === 'skill') {
+  if (prop && prop.kind === 'skill' && !prop.replaceId) {
     const skillName = String(opts.skillName || skillNameFromReflection(content)).trim();
     const skillBody = String(opts.skillBody || content).trim();
     const summary = String(opts.summary || content).trim();
@@ -20657,12 +20698,25 @@ async function writeMemoryRecord(agentId, prop, opts) {
   let writtenId = null, rec = null;
   await notebookStore.update('notebook:' + agentId, (stored) => {
     const list = Array.isArray(stored) ? stored : [];
+    if (prop && prop.replaceId) {
+      if (!opts.userConfirmed) throw new Error('a proposed memory correction must be reviewed before replacing the existing belief');
+      const at = list.findIndex(r => r.id === prop.replaceId);
+      rec = reviseRecord(list[at], { previousBody: prop.previousBody, body: redact(content), runId, userConfirmed: true }, Date.now());
+      if (trustDelta) rec.trust = memcore.nextTrust(rec.trust, trustDelta);
+      list[at] = rec;
+      writtenId = rec.id;
+      return list;
+    }
+    const sameText = value => String(value || '').trim().toLowerCase() === content.toLowerCase();
+    if (list.some(r => r && (sameText(r.content != null ? r.content : r.body) ||
+        (Array.isArray(r.history) && r.history.some(h => h && sameText(h.body)))))) return undefined;
     writtenId = memcore.nextNoteId(list);   // collision-proof (positional length reuses a slot freed by forget)
     rec = recordFromProposal(prop || {}, { now: Date.now(), runId: runId || (prop && prop.sourceRunId), id: writtenId, content, origin: opts.origin, userConfirmed: opts.userConfirmed === true });
     if (trustDelta) rec.trust = memcore.nextTrust(rec.trust, trustDelta);   // M-mem.6: keep/edit seeds real trust; silent auto-save leaves it neutral
     list.push(rec);
     return list;
   });
+  if (!rec) return { ok: false, error: 'That text is already remembered or was superseded. Review the current memory and make an explicit correction instead.' };
   chanEmit('memory.write', { agentId, runId: runId || rec.sourceRunId || writtenId, id: writtenId, kind: rec.kind, scope: rec.scope });
   // HOOKS — on_memory_write, at the OTHER path that commits a record (the silent auto-save + the Keep/Edit
   // turn-in both land here, not in notebook.write). Both sites fire it or the event would be true only half
@@ -20763,10 +20817,11 @@ async function handleMemoryTurnin(req, res) {
   // keep/edit -> commit a real §5.2 record via the ONE write path (shared with silent auto-save). The keep/edit
   // verdict seeds real trust (fb.delta); a skill proposal becomes a saved skill instead of a note.
   const content = (verdict === 'edit' ? String(body.content != null ? body.content : prop.content) : prop.content).trim();
-  const w = await writeMemoryRecord(agentId, prop, {
+  let w;
+  try { w = await writeMemoryRecord(agentId, prop, {
     content, runId, trustDelta: fb.delta, origin: prop.origin, userConfirmed: true,   // the surface that PROPOSED it, not the one approving it
     skillName: body.skillName || body.name, skillBody: body.skillBody || body.body, summary: body.summary
-  });
+  }); } catch (e) { return json(409, { error: (e && e.message) || 'could not update that memory; reload and review its current text' }); }
   if (!w.ok) return json(400, { error: w.error || 'could not save that memory' });
   await takePending(agentId, runId, id);   // consume only after the kept bytes are durably accepted
   dropLive();
@@ -20830,7 +20885,8 @@ function servePending(req, res) {
     const rows = listPending(agent).map(p => redact({
       runId: p.runId || '', id: p.id || '', kind: p.kind || 'note',
       content: String(p.content || ''), scope: p.scope || 'global',
-      origin: p.origin || 'commander', createdAt: p.createdAt || 0
+      origin: p.origin || 'commander', createdAt: p.createdAt || 0,
+      ...(p.replaceId ? { replaceId: p.replaceId, previousBody: p.previousBody } : {})
     }));
     json(200, { agentId: agent, pending: rows });
   } catch (e) { json(500, readRouteFailure('memory.pending', e)); }   // an un-answered high-stakes deck must not vanish behind a 200-empty
@@ -20934,9 +20990,10 @@ function handleMemoryForget(req, res) {
    station may remember). POST persists { reflectEnabled?, reflectCooldownMs? } and applies LIVE (the reflect gate
    reads memoryConfig on every run). Cooldown clamps to a sane 0–1h so a typo can't wedge or spam the loop. ---- */
 function memoryScopeNote() {
-  return 'After a completed task, the station may propose short factual notes it learned about your work — always ' +
-    'shown for you to Keep, Edit or Discard first. Nothing is remembered without your say-so; a Discard is remembered ' +
-    'as "never propose this again". Turn reflection off to stop it proposing new memories entirely.';
+  return 'After a completed task, reflection may save ordinary factual notes with a receipt you can undo. ' +
+    'Sensitive beliefs and proposed changes to existing memories wait for Keep, Edit or Discard. ' +
+    'Direct notebook saves happen during the task. A Discard means "never propose this again". ' +
+    'Turning reflection off stops automatic reflection, but does not disable direct notebook saves.';
 }
 function handleMemoryConfigGet(req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -20991,7 +21048,8 @@ async function serveStatic(req, res) {
     const abs = path.resolve(FRONTEND, rel);
     if (abs !== FRONTEND && abs.indexOf(FRONTEND + path.sep) !== 0) { res.writeHead(403); return res.end('forbidden'); }
     let data = await fsp.readFile(abs);
-    if (abs.toLowerCase() === path.resolve(FRONTEND, 'index.html').toLowerCase()) {
+    if (abs.toLowerCase() === path.resolve(FRONTEND, 'index.html').toLowerCase() ||
+        (DEV_MODE && abs.toLowerCase() === path.resolve(FRONTEND, 'agent-station-demo.html').toLowerCase())) {
       let boot = '<script>window.__STARNET_API_TOKEN__=' + JSON.stringify(API_TOKEN) + ';';
       // DEV fast-path: hand the page a model + provider hint so a fresh origin auto-resumes the seeded
       // save with no setup. No secret crosses here — the key stays server-side in runtimeKey.

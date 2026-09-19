@@ -1220,32 +1220,59 @@ const Chat = (() => {
       }
       return false;
     };
-    const buckets = new Map();
-    const status = [];
+    // THE LOCAL THREAD OWNS ITS ORDER (2026-09-13). The durable transcript is NOT a byte-exact superset of what
+    // the Commander saw: a group/@mention run records its user turn as a "Shared conversation context…" packet,
+    // a screen capture is journaled as a synthetic user turn, and error / stopped / delegated / retried rows only
+    // ever exist locally. The old merge emitted the server's turns first and pushed every unmatched local row to
+    // the END — so a user's own questions slid to the bottom, internal prompts surfaced as their messages, and
+    // App.persist() made the scramble permanent on every open ("history disappears"). Now: walk the local rows in
+    // their own order and keep every one in place; a durable turn with an exact local twin ENRICHES that row
+    // (ts / rowId / sourceRunId); a durable turn the local thread never saw (headless cron / channel / page-closed
+    // completion) is INSERTED right after the last row a durable turn anchored to. Nothing is ever reordered.
+    const kept = [];   // { row, key } — the surviving local rows, original order
+    const buckets = new Map();   // role\0content -> queue of kept indices (occurrence-aware, like before)
     let userRunId = '';
     for (const row of Array.isArray(local) ? local : []) {
-      if (row && row.sys) { if (!row.transcriptPending) status.push(row); continue; }
+      // settled local status lines (failed / silent / nothing-to-report) stay exactly where they were. A pending
+      // transcript warning is rebuilt from the latest read below, so it vanishes as soon as canonical prose lands.
+      if (row && row.sys) { if (!row.transcriptPending) kept.push({ row, key: null }); continue; }
       if (!row || (row.role !== 'user' && row.role !== 'assistant')) continue;
       if (row.role === 'user') userRunId = String(row.sourceRunId || '');
       if (committedAggregate(row, String(row.sourceRunId || userRunId))) continue;
       if (row.role === 'assistant' && !String(row.content == null ? '' : row.content).trim()) continue;
       const key = row.role + '\u0000' + String(row.content || '');
-      const q = buckets.get(key) || []; q.push(row); buckets.set(key, q);
+      const q = buckets.get(key) || []; q.push(kept.length); buckets.set(key, q);
+      kept.push({ row, key });
     }
-    const merged = [];
+    // User-role rows the sidecar journals that were never typed by the Commander: the group-session context packet
+    // (sidecar/group-sessions.js) and the screen-capture injection (sidecar/loop.js). Prefix-matched on purpose —
+    // both are fixed harness strings, and a real message that merely mentions them does not START with them.
+    const internalTranscriptPrompt = text => /^Shared conversation context \(/.test(text) || /^\[BEGIN EXTERNAL SCREEN CAPTURE/.test(text);
+    // Durable-only turns, keyed by the kept index they follow (-1 = before the first local row). Occurrence queues,
+    // rather than a Set, keep two identical user turns distinct while still preventing a duplicate final answer.
+    const inserts = new Map();
+    let anchor = -1;
     for (const turn of Array.isArray(turns) ? turns : []) {
       if (!turn || (turn.role !== 'user' && turn.role !== 'assistant')) continue;
-      if (turn.role === 'assistant' && !String(turn.content == null ? '' : turn.content).trim()) continue;
-      const key = turn.role + '\u0000' + String(turn.content || '');
-      const q = buckets.get(key) || [], prior = q.shift();
-      merged.push(Object.assign({}, turn, prior || {}, { role: turn.role, content: String(turn.content || ''), ts: turn.ts != null ? turn.ts : (prior && prior.ts) }));
+      const content = String(turn.content == null ? '' : turn.content);
+      if (turn.role === 'assistant' && !content.trim()) continue;
+      const key = turn.role + '\u0000' + content;
+      const q = buckets.get(key), idx = (q && q.length) ? q.shift() : -1;
+      if (idx >= 0) {
+        const prior = kept[idx].row;
+        kept[idx].row = Object.assign({}, turn, prior, { role: turn.role, content, ts: turn.ts != null ? turn.ts : prior.ts });
+        anchor = idx;
+        continue;
+      }
+      if (turn.role === 'user' && internalTranscriptPrompt(content)) continue;   // harness packets are not Commander speech
+      const list = inserts.get(anchor) || []; list.push(Object.assign({}, turn, { role: turn.role, content })); inserts.set(anchor, list);
     }
-    // Preserve genuinely local/in-flight rows the sidecar has not committed yet. Occurrence queues, rather than
-    // a Set, keep two identical user turns distinct while still preventing a duplicate final answer.
-    for (const q of buckets.values()) for (const row of q) merged.push(row);
-    // Keep settled local status lines (failed / silent / nothing-to-report). A pending transcript warning is rebuilt
-    // from the latest read below, so it disappears automatically as soon as canonical prose becomes available.
-    for (const row of status) merged.push(row);
+    const merged = [];
+    for (const turn of inserts.get(-1) || []) merged.push(turn);
+    for (let i = 0; i < kept.length; i++) {
+      merged.push(kept[i].row);
+      for (const turn of inserts.get(i) || []) merged.push(turn);
+    }
     return merged;
   }
 
@@ -3972,7 +3999,8 @@ const Chat = (() => {
       slot.innerHTML = '';
       const item = document.createElement('div'); item.className = 'turnin-item';
       const kind = document.createElement('span'); kind.className = 'turnin-kind'; kind.textContent = KIND_TAG[prop.kind] || 'NOTE';
-      const text = document.createElement('span'); text.className = 'turnin-text'; text.textContent = prop.content;
+      const text = document.createElement('span'); text.className = 'turnin-text';
+      text.textContent = prop.replaceId ? 'Update remembered preference: “' + prop.previousBody + '” → “' + prop.content + '”' : prop.content;
       const btns = document.createElement('span'); btns.className = 'consent-btns';
       item.appendChild(kind); item.appendChild(text); item.appendChild(btns);
       slot.appendChild(item);
@@ -6246,10 +6274,35 @@ const Chat = (() => {
     return true;
   }
 
+  /* DELIVERABLE REPLAY (2026-09-16 — customer: "can't send clickable files anymore, it sends a text path").
+     The ▤ saved / ▤ made rows were painted LIVE from the `deliverable` event only; renderHistory replayed
+     user / assistant / sys turns, so any reload, stream switch or Try Again dropped every clickable file row
+     and left the model's prose path as the only trace. Workstreams.recordDeliverable already files every shown
+     deliverable ({title, kind, runId, t}) on its stream — replay those in time order, each row landing where
+     the live run painted it: before the reply that followed it, leftovers after the last turn. Background
+     streams (never on screen when their run produced a file) gain their rows the first time they are opened. */
+  function replayableDeliverables(ws) {
+    const list = ws && Array.isArray(ws.deliverables) ? ws.deliverables : [];
+    return list
+      .filter(d => d && String(d.title || '').trim() && (d.kind === 'file' || d.kind === 'image' || d.kind === 'video' || d.kind === 'audio'))
+      .slice()
+      .sort((a, b) => (+a.t || 0) - (+b.t || 0));
+  }
+  function replayDeliverableRow(d, agentId) {
+    const mk = d.kind === 'file' ? mediaKindOf(d.title) : d.kind;   // the recorded kind IS the rendered kind (see onDeliverable)
+    if (mk === 'image') imageDeliverableLine(d.title, agentId);
+    else if (mk === 'video' || mk === 'audio') mediaPlayerLine(d.title, agentId, mk);
+    else deliverableLine(d.title, agentId);
+  }
   function renderHistory() {
     const h = activeWs ? activeWs.history : [];
     let lastReal = null;   // the trailing dialogue turn (for the error-recovery re-offer below)
     renderingHistory = true;   // suppress the per-row entrance animation across this bulk replay (restored below)
+    const delivs = replayableDeliverables(activeWs);
+    const delivAgent = (activeWs && activeWs.agentId) || 'agent';
+    let di = 0;
+    // every recorded deliverable stamped at/before `ts` lands now (ts == null flushes the rest)
+    const flushDeliverablesBefore = (ts) => { while (di < delivs.length && (ts == null || (+delivs[di].t || 0) <= ts)) replayDeliverableRow(delivs[di++], delivAgent); };
     try {
     for (const m of h) {
       if (m && m.truncated) {   // E3: the local history-cap marker — render it as a dim centered SYSTEM line (not a dropped record)
@@ -6268,11 +6321,13 @@ const Chat = (() => {
       // a turn produced by a WORK LINE stage carries its own agentId — replay names that agent, not the focused
       // one, or a reload would silently re-attribute two other agents' work to whoever owns the stream now.
       const spoke = (m && m.agentId && typeof App !== 'undefined' && App.agentName) ? App.agentName(m.agentId) : null;
+      if (stamp !== false) flushDeliverablesBefore(stamp);   // the files this reply's run produced were shown BEFORE the reply landed
       const r = row('agent', { stamp: stamp, who: spoke });   // past turns render as plain GROUPED messages; only the LIVE reply is the lit headline
       if (m.error) r.d.classList.add('err');
       renderProse(r.body, m.content);   // same linkify path as live tokens, so replayed history matches
       lastReal = m;
     }
+    flushDeliverablesBefore(null);   // files newer than the last stored turn (or from turns without a stamp)
     } finally { renderingHistory = false; }   // future LIVE rows animate again
     // STRANDED-USER LAW: a reload/switch onto a stream whose LAST turn failed (error:true) must not leave the
     // Commander with a dead thread and no way out — load() wiped the live recovery chips. Re-offer a plain retry
@@ -6594,6 +6649,7 @@ const Chat = (() => {
   async function continueConnectorTask(streamId) {
     const ws = Workstreams.get(streamId), h = Workstreams.connectorHandoff(streamId);
     if (!ws || !h || connectorContinuing.has(streamId) || Channels.isBusy(streamId)) return false;
+    const continuationFocusVersion = focusVersion;
     connectorContinuing.add(streamId);
     try {
       let j = await Harness.api.get('/api/connectors');
@@ -6606,6 +6662,12 @@ const Chat = (() => {
       if (!c || c.state !== 'up' || !c.enabled || c.authRequired) throw new Error('Connect ' + h.connectorId + ' before continuing.');
       if (h.toolName && !(c.tools || []).includes(h.toolName)) throw new Error('This connection does not offer the operation the task requested. Inspect its tools in ABILITIES.');
       if (Workstreams.connectorHandoff(streamId) !== h || Channels.isBusy(streamId)) return false;
+      // Checking/refreshing a connection yields to the Commander. A later response must not
+      // override new navigation, typing, or an attachment; leave the handoff available to retry.
+      if (focusVersion !== continuationFocusVersion || isComposerEngaged() || Workstreams.get(streamId) !== ws) {
+        if (typeof StationUI !== 'undefined') StationUI.notify('Connection checked. Continue the task when you are ready.', 'info');
+        return false;
+      }
       App.openWorkstream(streamId);
       Workstreams.setConnectorHandoff(streamId, null);
       App.persist();
@@ -8938,6 +9000,12 @@ const Chat = (() => {
     return () => { killed = true; };
   }
 
+  // Background navigation must not steal the caret, an unsent draft (including whitespace),
+  // or files that are staged/uploading. Explicit session clicks keep their existing behavior.
+  function isComposerEngaged() {
+    return !!(pendingAtts.length || (input && (input.value.length ||
+      (typeof document !== 'undefined' && document.activeElement === input))));
+  }
   // Only a still-current foreground run may honor model-driven navigation. Tool arguments alone
   // cannot establish that the Commander is still looking at the conversation that asked for it.
   function canFocusSession(origin) {
@@ -8975,5 +9043,5 @@ const Chat = (() => {
   // only" gate maybeStandaloneRate uses — so a pure-chat run is never bottle-offered. Used by App.runBottleInfo (R5).
   function runDidWork(id) { const w = id ? runWork.get(id) : null; return !!(w && ((w.toolsOk || 0) >= 1 || (w.delivered || 0) >= 1)); }
 
-  return { ownsRemoteTransport, renderRemoteActivity, canRefreshRemote, refreshRemoteTranscript, refreshRemoteHistory, init, load, send, refreshStarters, sendOrQueue, continueConnectorTask, stopActive, status, localLine, broadcast, renderProse, setSystem, getHistory, contextRef, abort, isBusy, beatBusy: skillBeatBusy, beginInterview, endInterview, echoUser, prefill, autoGrowInput, choices, clearChoices, retireDeskPrompt, typeLine, nudge, clearNudge, offerCuriosity, offerFork, planGoalPath, briefingReceipt, canFocusSession, runMeta, runDidWork, awayDigest, awayReview, awayRate, sampleCard, workshopReturn, refreshIdBar: renderIdBar, refreshGroupControls: updateControls, refreshAgentIdentity, setRosterStatus, askBudgetSpent, spendAsk };
+  return { ownsRemoteTransport, renderRemoteActivity, canRefreshRemote, refreshRemoteTranscript, refreshRemoteHistory, init, load, send, refreshStarters, sendOrQueue, continueConnectorTask, stopActive, status, localLine, broadcast, renderProse, setSystem, getHistory, contextRef, abort, isBusy, beatBusy: skillBeatBusy, beginInterview, endInterview, echoUser, prefill, autoGrowInput, choices, clearChoices, retireDeskPrompt, typeLine, nudge, clearNudge, offerCuriosity, offerFork, planGoalPath, briefingReceipt, isComposerEngaged, canFocusSession, runMeta, runDidWork, awayDigest, awayReview, awayRate, sampleCard, workshopReturn, refreshIdBar: renderIdBar, refreshGroupControls: updateControls, refreshAgentIdentity, setRosterStatus, askBudgetSpent, spendAsk };
 })();
