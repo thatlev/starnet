@@ -282,9 +282,8 @@ const Dialogue = (() => {
     if (!optsEl) { finishPick({ value: '', skip: true }); return; }
     pendingPick = { cfg, finishPick };   // arm the composer path (Dialogue.answer) for THIS question
     optsEl.innerHTML = '';
-    if (cfg.allowCustom && cfg.customFirst) {
-      if (window.__STARNET_REMOTE__) renderClassicConversation(cfg, finishPick);
-      else renderConversation(cfg, finishPick);
+    if (cfg.allowCustom && cfg.customFirst && !window.__STARNET_REMOTE__) {
+      renderConversation(cfg, finishPick);
       return;
     }
     const opts = (cfg.options || []).slice();
@@ -296,7 +295,15 @@ const Dialogue = (() => {
       const num = document.createElement('span'); num.className = 'fnv-num'; num.textContent = (idx + 1) + '.';
       const lbl = document.createElement('span'); lbl.className = 'fnv-opt-l'; lbl.textContent = o.label;
       b.appendChild(num); b.appendChild(lbl);
-      b.onclick = () => finishPick({ value: o.value != null ? o.value : o.label, label: o.label, skip: !!o.skip });
+      b.onclick = () => {
+        // Keep StarNet's original numbered-choice UI in the remote viewer.
+        // New interview suggestions still open the user's own answer editor.
+        if (window.__STARNET_REMOTE__ && cfg.allowCustom && cfg.customFirst && !o.skip && !o.open && !o.help) {
+          openCustom({ ...cfg, customPlaceholder: o.steer || cfg.customPlaceholder }, finishPick);
+        } else {
+          finishPick({ value: o.value != null ? o.value : o.label, label: o.label, skip: !!o.skip, ...(o.help ? { help: true } : {}) });
+        }
+      };
       optsEl.appendChild(b); rows.push(b);
     });
     let customBtn = null;
@@ -378,29 +385,6 @@ const Dialogue = (() => {
       b.onclick = () => finishPick({ value: o.value == null ? '' : o.value, label: o.label, skip: !!o.skip, help: !!o.help });
       optsEl.appendChild(b);
     });
-  }
-
-  // The remote viewer keeps the classic compact choice list. Suggestions still
-  // ask for the user's own answer; presentation must not invent interview facts.
-  function renderClassicConversation(cfg, finishPick) {
-    for (const option of cfg.options || []) {
-      const button = document.createElement('button');
-      button.type = 'button'; button.className = 'fnv-opt' + (option.skip ? ' skip' : '');
-      button.textContent = option.label;
-      button.onclick = () => {
-        if (option.skip || option.open || option.help) {
-          finishPick({ value: option.value == null ? '' : option.value, label: option.label, skip: !!option.skip, help: !!option.help });
-        } else {
-          openCustom({ ...cfg, customPlaceholder: option.steer || ('What would you like help with in ' + option.label.toLowerCase() + '?') }, finishPick);
-        }
-      };
-      optsEl.appendChild(button);
-    }
-    const custom = document.createElement('button');
-    custom.type = 'button'; custom.className = 'fnv-opt custom';
-    custom.textContent = '✎ ' + (cfg.customLabel || 'say it in my own words');
-    custom.onclick = () => openCustom(cfg, finishPick);
-    optsEl.appendChild(custom);
   }
 
   /* the custom-speech path — swaps the option list for an input. Enter or ▸ submits; ‹ back restores

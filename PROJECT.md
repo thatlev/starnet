@@ -6,7 +6,7 @@ Upstream history, MIT license and notices are retained.
 ## Active release: remote display and connection setup
 
 - [x] Reproduce delayed scroll movement and distinguish data refresh from decorative screen flicker.
-- [x] Preserve provider geometry and editors during asynchronous updates; restore the classic remote conversation presentation without reverting upstream interview logic.
+- [x] Preserve provider geometry and editors during asynchronous updates; restore the original StarNet conversation renderer and styles without reverting upstream interview logic.
 - [x] Verify delayed updates in the browser; the 15-second reply retains the exact scroll position.
 - [ ] Package, install and push the reviewed display/connection candidate.
 
@@ -14,7 +14,7 @@ Upstream history, MIT license and notices are retained.
 | --- | --- | --- |
 | A 243px account result became a 24px loading placeholder during rebuild, clamping the scroll position before the delayed result returned. | Reserve the account surface's current height until Settings closes. | Browser reproduced a 221px shift; the fixed 18-second test with a 15-second response had zero scroll movement. |
 | Rebuilt provider cards replayed their entrance animation; upstream also dimmed the entire game every seven seconds. | Background renders suppress card entrance motion. Remote viewers adopt a one-time calm default while retaining the explicit Screen Flicker toggle. | Browser reported no card or full-screen flicker animations after the refresh. |
-| Upstream's new conversation layout put a large answer box above expandable suggestions. | Remote-only classic dark presentation, compact options and an explicit custom-answer editor. | The upstream interview logic remains; suggestions still require the user's own answer. |
+| Upstream's new conversation layout put a large answer box above expandable suggestions; our first repair added a duplicate renderer and incorrect remote CSS. | Reuse StarNet's original numbered-choice renderer and unchanged shared styles; remove the duplicate renderer and remote.css entirely. | Compared against pre-update commit `2f2985718`: identical panel DOM, all computed CSS properties and element bounds for the original question/options. BOSS is 22px and the question is aligned at the top left. New interview suggestions still open the user's own answer editor. |
 
 ## Remote connection onboarding in this candidate
 
