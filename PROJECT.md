@@ -7,11 +7,14 @@ Upstream history, MIT license and notices are retained.
 
 - [x] Diagnose the duplicate loading-window entry and retire only the temporary startup shell.
 - [x] Preserve local/remote switching, close/quit and single-instance reveal behavior.
-- [ ] Run native regressions, rebuild/install, verify the window lifecycle and push the private-fork fix.
+- [x] Run native regressions, rebuild/install and verify the window lifecycle; prepare the private-fork fix.
 
 The running app has one native process and one connection helper; the extra black switcher entry is the retained `main` startup placeholder. Remote handoff previously called `hide()`, keeping that native window alive. Successful remote/setup handoff now destroys only `station-host.html`, without invoking the close handler. The original local window builder and lifecycle handler are reused through a factory so choosing This Computer can create the privileged local shell on demand. Closing a remote-only app without `main` still goes through the bounded remote flush and normal helper shutdown. An existing local station window retains its original background-work lifecycle.
 
 This is a Mac shell change. No server runtime change or restart is needed.
+
+Installed Mac source: `8bab88a7955a6280b187008e54b4f0558afb0609`. All 50 native tests and deep/strict signature verification passed. Native destruction events confirmed the startup window was removed after successive remote launches. A remote-only window close exited the native process and helpers; an additional launch while running returned to the single existing process. This Computer created the original local shell on demand, Connection Setup returned to the saved remote station with a live feed, and Command-Q exited the app, local runtime and connection helpers. The final launch resumes remote mode. Client backup: `work/mac-build/client-backup-20260919-205454/`; prior app bundles remain retained. No provider settings were changed and no model request or agent task was started. The official upstream PR continues to wait for Lev's acceptance.
+
 
 ## Active follow-up: compact settings and Gateway controls
 

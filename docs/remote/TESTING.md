@@ -28,3 +28,7 @@ Automated verification already exercises a synthetic 429 provider, process resta
 10. Narrow Settings and check the saved API key cards: long endpoint URLs must wrap without crossing the buttons. During a connection check, **Cancel** and **Test & Save** must have equal bounds. On first setup only, a successful check should open the station automatically. The startup wordmark and message should remain centered.
 
 Public release signing/notarization and the official upstream PR are separate from this local candidate. Do not erase working data or revoke real provider keys merely to simulate a fresh install.
+
+## Startup window lifecycle
+
+After remote startup, the window switcher should show the station without a second black loading window. Close the remote station, reopen StarNet, then use Connection Setup to switch to This Computer and back. The local station should open normally, and reopening remote mode should retain the saved connection without bringing back the loading window.
