@@ -224,7 +224,7 @@ fn terminate_sidecar_child(child: &mut Child) {
 
 impl AppState {
     /// Kill the child sidecar on intentional shutdown. HONESTY NOTE: this only covers the
-    /// graceful paths — the ExitRequested run-event and `Drop for AppState`. A hard kill of
+    /// graceful paths — the ExitRequested/Exit run-events and `Drop for AppState`. A hard kill of
     /// the shell (`taskkill /F`, crash, task-manager End Task, power loss) runs NEITHER, and
     /// there is no in-process hook that can — which is exactly how orphan sidecars happen.
     /// The reliable other half is `reap_orphan_sidecars`, which runs at the NEXT boot before
@@ -4200,6 +4200,15 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build the StarNet desktop shell")
         .run(|app, event| {
+            // Also clean up when macOS finishes the event loop directly.
+            // ExitRequested is not the only shutdown path; cleanup is idempotent.
+            if let RunEvent::Exit = event {
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.shutting_down.store(true, Ordering::SeqCst);
+                    state.kill_sidecar();
+                }
+                remote_desktop::stop(app);
+            }
             if let RunEvent::ExitRequested { api, code, .. } = event {
                 // Window close and event-loop exit are separate decisions in Tauri. Hold only the exit paired
                 // with our main window's CloseRequested event while its worker decides from the explicit
