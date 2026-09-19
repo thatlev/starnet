@@ -10,8 +10,12 @@ Upstream history, MIT license and notices are retained.
 - [x] Keep provider settings scroll, focus and edits stable during delayed background loads.
 - [x] Review and simplify the remote additions, including gateway connection reuse and recovery.
 - [x] Run focused regressions, attempt upstream fast/HTTP gates and build the native candidate.
-- [ ] Install the reviewed server and Mac test candidate, retaining the old release and client state.
-- [ ] Push the reviewed release to the private fork and document Lev's acceptance steps. Upstream PR waits for Lev's testing.
+- [x] Install the reviewed server and Mac test candidate, retaining the old release and client state.
+- [x] Prepare the reviewed release for the private fork with Lev's acceptance steps. Upstream PR waits for Lev's testing.
+
+Installation receipt (2026-09-19): runtime and Mac source `ed483d6f43278def01555001d9bcc7784ad488d8`; Mac 0.1.3 (build 4), compiled and signature-verified in `/Applications/StarNet Remote.app`. All 16,092 staged runtime/test source files matched the reviewed checkout by SHA-256. Linux passed 22 remote tests and all 20 selected upstream regression suites; Mac passed 28 focused remote/native/onboarding tests and the same 20 regression suites. The installer passed runtime readiness and unauthenticated-gateway refusal. The station save remained byte-for-byte identical, at revision 87; runs, prompts, summons, queues and goals were all zero before and after installation. No production inference was used.
+
+Recovery: the previous server release remains `/opt/starnet/releases/24643b70f`. A private pre-upgrade data/unit backup is under `/srv/private/starnet-upgrade-backups/ed483d6f43278def01555001d9bcc7784ad488d8/`. The previous Mac bundle and client data are retained under `work/mac-build/replaced-apps/` and `work/mac-build/client-backup-*/`. Installed Mac interaction and Lev's acceptance remain pending; no upstream PR has been opened.
 
 Implementation: remote API keys, custom endpoints and backup keys now use the server's protected `.secrets/remote-providers.json` store. Writes are atomic, fsynced and confirmed before the viewer deletes its legacy copies. Migration is insert-only so an older viewer cannot undo a replacement or removal. The desktop keychain and privileged IPC gate remain unchanged. Saved remote stations open independently of provider availability or quota. Custom model IDs survive catalogs that omit them.
 
