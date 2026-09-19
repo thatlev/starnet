@@ -68,6 +68,7 @@ test('connection probe authenticates, checks runtime and SSE, and releases its t
       streams++; res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.write('retry: 3000\n\n'); return;
     }
     assert.equal(req.headers['x-starnet-token'], apiToken);
+    if (req.url === '/api/health') { res.setHeader('Content-Type', 'text/plain'); res.end('ok'); return; }
     res.setHeader('Content-Type', 'application/json'); res.end('{}');
   });
   const runtimePort = await listen(runtime); t.after(() => close(runtime));

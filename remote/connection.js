@@ -51,7 +51,8 @@ async function probeConnection(input, { signal, phase = () => {}, spawnSSH = spa
       for (const route of ['/api/health', '/api/state/snapshot']) {
         const response = await fetch(base + route, { headers: runtimeHeaders, signal: bounded });
         if (!response.ok) throw new Error('The runtime is not ready. Check the server service and try again.');
-        await response.json();
+        if (route === '/api/state/snapshot') await response.json();
+        else await response.text(); // StarNet health returns plain-text "ok".
       }
       const streamAbort = new AbortController();
       try {
