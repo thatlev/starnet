@@ -209,3 +209,6 @@ sidecar/mcp/google-client.json
 
 # Local shell material live-proof images and disposable browser profile.
 /.shell-proof/
+
+# Verified helper binaries and server installer bundled by the Mac desktop build.
+/src-tauri/remote-deps/

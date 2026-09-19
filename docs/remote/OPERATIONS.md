@@ -2,7 +2,7 @@
 
 ## Ownership and persistence
 
-The Mac runs a native WKWebView plus a small Node.js proxy. The proxy establishes its own SSH connection with strict host-key checking, disabled multiplexing, keepalives and bounded reconnection backoff. It does not control the systemd service. Closing the window or quitting the app terminates only this connection.
+The standard Tauri desktop shell hosts the original local station or an isolated remote WKWebView plus a small Node.js proxy. The local engine starts only when This Computer is selected. The proxy establishes its own SSH connection with strict host-key checking, disabled multiplexing, keepalives and bounded reconnection backoff. It does not control the systemd service. Closing the window or quitting the app terminates only this connection.
 
 The server owns the runtime, tool processes, delegation, routing, scheduled workflows and remote standing goals. The station's pure session commands run without a DOM through the existing Workstreams implementation. Session saves retain revision checks; concurrent or offline edits are preserved as conflicts instead of replacing newer state. User drafts are not replaced during remote refresh.
 
@@ -12,7 +12,7 @@ Remote API keys, custom base URLs and backup keys persist on the server. Existin
 
 A saved remote station opens even when the provider has exhausted quota, is unavailable, or has no working credential. Settings remain accessible to repair it. Boot and migration do not validate keys against a provider. Saving a newly entered key retains the existing validation flow and preserves the old key if validation fails. Custom model IDs remain selected when an endpoint's model catalog omits them.
 
-The compact Gateway control stays neutral while connected. Reconnection, an expired session or pending decisions adds a visible text label. The panel keeps approval controls stable during polling, disables them while disconnected and distinguishes last-known activity from a live snapshot. Expired sessions require an explicit reload; copy unsent text first. The Mac application menu exposes the same panel with Command-comma. Connection Setup (Command-K) handles sign-in and SSH settings; see [setup](SETUP.md).
+The compact Gateway control stays neutral while connected. Reconnection, an expired session or pending decisions adds a visible text label. The panel keeps approval controls stable during polling, disables them while disconnected and distinguishes last-known activity from a live snapshot. Expired sessions require an explicit reload; copy unsent text first. The station’s Gateway control exposes connection status. Station → Connection Setup (Command-K) handles sign-in and SSH settings; see [setup](SETUP.md).
 
 Every remote run and goal command requires a unique request ID, claimed durably before execution. Retrying an accepted ID returns a refusal and never starts another run. Closing a response stream detaches its viewer; explicit cancellation still aborts its server run. Bounded backpressure disconnects a stalled viewer without accumulating unlimited output.
 
@@ -32,7 +32,7 @@ The LevServer model key allows the gateway's subscription models and preserves a
 
 | Surface | Location |
 | --- | --- |
-| Mac app | `/Applications/StarNet Remote.app` |
+| Mac app | `/Applications/StarNet.app` |
 | Mac nonsecret connection settings | `~/.config/starnet-remote/config.json` |
 | Linux immutable releases | `/opt/starnet/releases/<revision>/` |
 | Linux active release | `/opt/starnet/current` |

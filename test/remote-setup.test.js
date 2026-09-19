@@ -95,7 +95,7 @@ test('connection probe authenticates, checks runtime and SSE, and releases its t
 });
 
 test('installer command uses a reviewed local archive and does not overwrite a running service itself', () => {
-  const script = terminalScript({ ...baseConfig, 'ssh-port': 22222 }, true, "/Applications/StarNet Remote.app/Contents/Resources/starnet-server.tar.gz");
+  const script = terminalScript({ ...baseConfig, 'ssh-port': 22222 }, true, "/Applications/StarNet.app/Contents/Resources/starnet-server.tar.gz");
   assert.match(script, /StrictHostKeyChecking=ask/); assert.match(script, /StrictHostKeyChecking=yes/);
   assert.match(script, /scp .* -P 22222/); assert.match(script, /sudo bash remote\/install-linux.sh 42/);
   assert.doesNotMatch(script, /systemctl stop|curl.*\|.*sh|StrictHostKeyChecking=no/);

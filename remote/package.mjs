@@ -1,4 +1,4 @@
-// Reproducible, private-state-free inputs for the standalone remote viewer.
+// Reproducible, private-state-free inputs for the unified desktop remote uplink.
 // Only tracked runtime sources enter the server archive; no workspaces, keys or host config.
 import fs from 'node:fs';
 import path from 'node:path';

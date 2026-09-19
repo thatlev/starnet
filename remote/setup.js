@@ -10,11 +10,11 @@ const { assertFree } = require('./cli');
 const { githubUser, probeConnection } = require('./connection');
 
 class SetupController {
-  constructor({ config = null, configFile, profile = githubUser, probe = probeConnection, onSave = () => {}, signIn, terminal, installerAvailable = false } = {}) {
-    Object.assign(this, { config, configFile, profile, probe, onSave, signIn, terminal, installerAvailable });
+  constructor({ config = null, configFile, profile = githubUser, probe = probeConnection, onSave = () => {}, signIn, terminal, installerAvailable = false, localAvailable = false } = {}) {
+    Object.assign(this, { config, configFile, profile, probe, onSave, signIn, terminal, installerAvailable, localAvailable });
     this.user = null; this.job = null; this.state = { phase: 'idle', message: '' };
   }
-  snapshot() { return { ...this.state, config: this.config, user: this.user, busy: !!this.job, installerAvailable: this.installerAvailable }; }
+  snapshot() { return { ...this.state, config: this.config, user: this.user, busy: !!this.job, installerAvailable: this.installerAvailable, localAvailable: this.localAvailable }; }
   launch(work) {
     if (this.job) throw new Error('A connection check is already running. Cancel it before starting another.');
     const job = new AbortController(); this.job = job;

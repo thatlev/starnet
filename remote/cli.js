@@ -128,6 +128,8 @@ async function connect(o) {
     setTimeout(() => process.exit(0), 200).unref();
   };
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
+  // A desktop helper crash closes IPC, so no orphan proxy holds the origin open.
+  if (process.send) process.once('disconnect', stop);
 }
 async function main() {
   const o = args(process.argv.slice(2));

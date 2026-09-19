@@ -3,6 +3,15 @@
 Private fork of androoAGI/starnet, updated through v0.12.3 (`3ba5b84922f3b62caa4e159999ef3acc82af2a3e`) on its default `feat/harness-backend` branch.
 Upstream history, MIT license and notices are retained.
 
+## Active follow-up: one desktop app
+
+- [x] Merge connection selection into the standard StarNet desktop shell, retaining its actual local runtime, keychain and lifecycle behavior.
+- [x] Offer this computer and remote uplink in one app; default fresh remote setup to a new server, while preserving existing saved connections.
+- [x] Replace the SSH diagram, em dashes, separate-app link and technical validation footer with concise privacy and security copy.
+- [ ] Verify local/remote isolation, switching and state preservation; rebuild the unified Mac candidate and publish reviewed source only to the private fork.
+
+The unified candidate uses the original Tauri app, identifier and local engine; the separate Swift viewer and duplicate loading UI are retired. Native commands accept only the bundled local window. Remote/setup windows use isolated loopback origins without local keychain authority. The helper is supervised without reloading the station, and its lifetime pipe/child IPC prevent orphan connections. Remote saves get a bounded flush before setup and exit. Legacy viewer drafts/preferences import once, by matching origin and without replacing existing keys. Fresh setup defaults to New Server and needs no GitHub account for local use. macOS 13+ is required by the bundled runtime. Publishing is held until the complete rebuilt app passes installed acceptance checks. Official upstream PR still waits for Lev's acceptance.
+
 ## Active release: remote display and connection setup
 
 - [x] Reproduce delayed scroll movement and distinguish data refresh from decorative screen flicker.

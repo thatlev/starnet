@@ -1,18 +1,18 @@
 # Connect a remote StarNet station
 
-StarNet Remote is a thin Mac viewer. The Linux machine owns your agent, provider keys, files and running work. Closing the viewer leaves the server running. The standard upstream desktop app remains the local-Mac option.
+StarNet is one desktop app. **This Computer** uses the original local runtime, onboarding and keychain. **Remote Uplink** connects another computer or a private gateway. In remote mode, that computer owns your agent, provider keys, files and running work; closing the Mac app leaves the server running. The connection chooser currently ships on macOS; other desktop platforms retain their original local behavior.
 
 ## Desktop setup
 
-Open **StarNet Remote → Connection Setup…** (Command-K). A fresh installation opens this screen automatically. An unavailable saved connection returns to it after a bounded startup attempt instead of waiting forever.
+Open **Station → Connection Setup…** (Command-K). A fresh installation opens this screen automatically. An unavailable saved connection returns to it after a bounded startup attempt instead of waiting forever.
 
-1. Choose **Already installed** or **Set up a new server**.
+1. Choose **This Computer** to open the original local station, or **Remote Uplink** for another computer. Remote setup defaults to **New Server** on a fresh installation; a saved connection selects **Already Installed** and retains its address.
 2. Sign in with GitHub. Complete the device-code flow in your browser. The gateway accepts only its configured GitHub owner; the app does not ask you to find a numeric account ID.
 3. Enter an SSH alias or `user@hostname`. Existing SSH configuration and keys work. Connection options allow an SSH port override and an existing gateway's port.
 4. Use **Set up SSH access in Terminal** if this is your first connection. Verify the fingerprint against your server provider/administrator. Add your public key to the server or unlock it in your SSH agent as needed. Automatic connections use key authentication and strict host-key checking; a changed fingerprint is never silently accepted.
 5. Choose **Test & save connection**, then **Open your station**. The test checks SSH, GitHub ownership, runtime health, the state snapshot and the live event stream. It does not run an agent or spend model credits.
 
-Failed and cancelled checks leave the saved connection unchanged. Settings persist outside the application bundle, so rebuilding does not reset them. Each server/account combination receives a separate browser origin; returning to a previous connection reuses its origin. Existing installations retain port 8790 and their existing drafts/preferences. New origins start at port 30000. The setup helper uses loopback port 18790 on a separate origin with strict Host/Origin and CSRF checks.
+Failed and cancelled checks leave the saved connection unchanged. Settings persist outside the application bundle, so rebuilding does not reset them. Each server/account combination receives a separate browser origin; returning to a previous connection reuses its origin. Existing installations retain port 8790. The retired Mac viewer’s stored StarNet drafts/preferences are imported once, only for their matching origin and only when a key is absent; original data remains intact. Local station storage is kept separate. New origins start at port 30000. The setup helper uses loopback port 18790 on a separate origin with strict Host/Origin and CSRF checks.
 
 GitHub CLI handles sign-in storage on the Mac. The token is sent through authenticated SSH to verify ownership, then discarded by the gateway. Provider credentials stay in the server's private provider store. Do not paste provider tokens into the SSH form.
 
@@ -31,14 +31,14 @@ When Terminal reports success, return to the viewer and test the connection. Con
 From a reviewed checkout on the target Mac architecture:
 
 ```sh
-bash remote/install-mac.sh "/Applications/StarNet Remote.app"
+bash remote/install-mac.sh
 ```
 
-The build includes pinned Node and GitHub CLI binaries verified against their official release checksums, their license notices, and a server archive containing only Git-tracked runtime sources plus locked dependencies. It includes both supported Linux architectures. Build tools (Node/npm, Swift/Xcode command-line tools, tar and unzip) are needed only on the packaging Mac. Fresh users do not need Homebrew, Node or GitHub CLI installed separately.
+The build includes pinned Node and GitHub CLI binaries verified against their official release checksums, their license notices, and a server archive containing only Git-tracked runtime sources plus locked dependencies. It includes both supported Linux architectures. Build tools (Node/npm, Rust, Xcode command-line tools, tar and unzip) are needed only on the packaging Mac. Fresh users do not need Homebrew, Node or GitHub CLI installed separately.
 
-`Contents/Resources/BUILD.json` records the runtime versions, architecture and server archive checksum. `SOURCE_REVISION` records the reviewed source revision. `remote/package.mjs` stages reproducible inputs under `work/remote-package/`; it refuses bundled workspace state. Stage new source files before a candidate build; release builds should use a clean committed checkout.
+`Contents/Resources/REMOTE-BUILD.json` records the runtime versions, architecture and server archive checksum. `SOURCE_REVISION` records the reviewed source revision. `remote/package.mjs` stages reproducible inputs under `work/remote-package/`; it refuses bundled workspace state. Stage new source files before a candidate build; release builds should use a clean committed checkout.
 
-The current script makes an ad-hoc signed developer candidate. Public distribution still requires the maintainer's Developer ID signing/notarization and release upload. No public download is claimed to exist before that release is published. Setup uses the station’s actual component styles, local VT323 font and ASCII wordmark. These assets are copied byte-for-byte from `frontend/`; `setup.css` only arranges the connection fields. The standalone viewer avoids exposing the local desktop's privileged IPC bridge to remote HTML.
+The current script makes an ad-hoc signed developer candidate. Public distribution still requires the maintainer's Developer ID signing/notarization and release upload. No public download is claimed to exist before that release is published. Setup uses the station’s actual component styles, local VT323 font and ASCII wordmark. These assets are copied byte-for-byte from `frontend/`; `setup.css` only arranges the connection fields. The original Tauri shell hosts separate local, setup and remote windows. Only its bundled local window can call native commands; remote HTML has no local keychain or tool authority. No second desktop app is installed. The installer preserves previous app bundles under `work/mac-build/replaced-apps/`.
 
 ## Design reference
 

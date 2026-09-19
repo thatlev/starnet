@@ -14,6 +14,7 @@
 mod credentials;
 mod fresh_start;
 mod lifecycle_preferences;
+mod remote_desktop;
 mod window_visibility;
 
 use std::collections::BTreeMap;
@@ -2072,7 +2073,7 @@ fn spawn_guardian(app: AppHandle) {
             if st.shutting_down.load(Ordering::SeqCst) {
                 break;
             }
-            if st.recovery_in_progress.load(Ordering::SeqCst) {
+            if !remote_desktop::local_started(&app) || st.recovery_in_progress.load(Ordering::SeqCst) {
                 continue;
             }
 
@@ -2588,6 +2589,9 @@ fn stay_resident_or_quit(app: &AppHandle, st: &AppState, why: &str) {
 
 /// Reveal + focus the main window (from a hidden/close-to-tray state or a minimized one).
 fn show_main_window(app: &AppHandle) {
+    if remote_desktop::reveal(app) {
+        return;
+    }
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
         let _ = win.unminimize();
@@ -2657,6 +2661,12 @@ fn spawn_tray_updater(app: AppHandle) {
         if let Some(state) = app.try_state::<AppState>() {
             if state.shutting_down.load(Ordering::SeqCst) {
                 break;
+            }
+            if let Some((tooltip, status)) = remote_desktop::tray_status(&app) {
+                if let Some(tray) = app.tray_by_id("starnet-tray") { let _ = tray.set_tooltip(Some(tooltip)); }
+                if let Some(handles) = app.try_state::<TrayHandles>() { let _ = handles.status.set_text(status); }
+                std::thread::sleep(Duration::from_secs(4));
+                continue;
             }
             let close_to_tray = lifecycle_preferences_snapshot(state.inner()).close_to_tray;
             let probe =
@@ -3845,6 +3855,7 @@ fn main() {
         // A second launch should focus the running window, not spin up a 2nd sidecar. Registered FIRST per
         // Tauri guidance (n1): single-instance must run before other plugins so a second process bails early.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if remote_desktop::reveal(app) { return; }
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.show(); // the window may be hidden in the tray — a relaunch should reveal it
                 let _ = win.unminimize();
@@ -3877,7 +3888,13 @@ fn main() {
         // the webview gets no dialog capability; the prompt is minted and answered at the host.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(|invoke| {
+            let webview = invoke.message.webview_ref();
+            if !webview.url().map(|url| remote_desktop::allows_native_commands(webview.label(), &url)).unwrap_or(false) {
+                invoke.resolver.reject("Native controls are available only to the local station");
+                return true;
+            }
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
             harness_store_key,
             harness_store_provider_key,
             harness_store_provider_key_pool,
@@ -3908,7 +3925,9 @@ fn main() {
             starnet_start_fresh,
             starnet_set_start_minimized,
             starnet_set_close_to_tray
-        ])
+            ];
+            handler(invoke)
+        })
         .setup(|app| {
             let root = project_root(app.handle());
             let port = free_port();
@@ -3921,6 +3940,8 @@ fn main() {
             let lifecycle_preferences_path = lifecycle_preferences_path(app.handle());
             let lifecycle_preferences = load_lifecycle_preferences(&lifecycle_preferences_path);
             let start_minimized = lifecycle_preferences.start_minimized;
+            let location_choice = remote_desktop::initial_choice(app.handle(), &root, &workspaces);
+            remote_desktop::install(app.handle(), &location_choice);
             let migrated_workspaces = migrate_workspace_data(
                 &workspaces,
                 &legacy_workspace_paths(&root, &workspaces),
@@ -3973,7 +3994,7 @@ fn main() {
             // Try to bring the sidecar up; on failure show a native Retry dialog naming startup.log
             // (audit 0.2). Even if this ultimately returns false, the guardian below keeps trying so
             // the app can still recover in the background rather than sitting permanently dead.
-            let _ = spawn_sidecar_with_retry(&state);
+            if location_choice == "local" { let _ = spawn_sidecar_with_retry(&state); }
             app.manage(state);
             app.manage(PendingUpdate(Mutex::new(None)));
 
@@ -4053,7 +4074,7 @@ fn main() {
                 );
             }
 
-            let main_window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let main_window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App(if location_choice == "local" { "index.html" } else { "station-host.html" }.into()))
                 .title("StarNet")
                 .inner_size(1280.0, 832.0)
                 .min_inner_size(960.0, 600.0)
@@ -4065,7 +4086,7 @@ fn main() {
                 .on_page_load(move |window, payload| {
                     if payload.event() == tauri::webview::PageLoadEvent::Finished {
                         if let Some(state) = window.app_handle().try_state::<AppState>() {
-                            if state.startup_reveal.finish_load() {
+                            if state.startup_reveal.finish_load() && remote_desktop::can_reveal_main(window.app_handle()) {
                                 let _ = window.show();
                             }
                         }
@@ -4134,7 +4155,7 @@ fn main() {
                                 &st.startup_log,
                                 format!("close-request: close_to_tray={close_to_tray}"),
                             );
-                            if close_to_tray {
+                            if close_to_tray && remote_desktop::local_started(&app2) {
                                 // Explicit authority to keep the supervised process alive even when no scheduled
                                 // work is armed. Tray Quit remains the only full-stop action in this mode.
                                 stay_resident_or_quit(&app2, st, "close-to-tray preference");
@@ -4173,6 +4194,7 @@ fn main() {
                 });
             }
 
+            remote_desktop::boot(app.handle(), &location_choice)?;
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -4192,11 +4214,16 @@ fn main() {
                     api.prevent_exit();
                     return;
                 }
+                if remote_desktop::defer_exit(app, code) {
+                    api.prevent_exit();
+                    return;
+                }
                 if let Some(state) = app.try_state::<AppState>() {
                     // Stop the guardian from respawning before we kill the child.
                     state.shutting_down.store(true, Ordering::SeqCst);
                     state.kill_sidecar();
                 }
+                remote_desktop::stop(app);
             }
         });
 }

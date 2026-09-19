@@ -21,6 +21,10 @@ function terminalScript(cfg, install, archive) {
 }
 async function main() {
   process.umask(0o077);
+  if (process.env.STARNET_UNIFIED_DESKTOP === '1') {
+    try { require('./migrate-viewer').exportViewerStorage(); }
+    catch (_) { console.error('Previous viewer storage could not be imported. Its original data is retained.'); }
+  }
   let proxy = null, closing = false, serial = 0;
   const resources = path.resolve(__dirname, '..');
   const installer = path.join(resources, 'starnet-server.tar.gz');
@@ -29,7 +33,7 @@ async function main() {
     const id = ++serial, old = proxy; proxy = null;
     const start = () => {
       if (closing || id !== serial) return;
-      proxy = spawn(process.execPath, [path.join(__dirname, 'cli.js'), 'connect'], { stdio: 'ignore' });
+      proxy = spawn(process.execPath, [path.join(__dirname, 'cli.js'), 'connect'], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
       proxy.on('error', () => {});
     };
     if (old && old.exitCode === null && old.signalCode === null) { old.once('close', start); old.kill('SIGTERM'); } else start();
@@ -54,7 +58,7 @@ async function main() {
     await run('/usr/bin/open', ['-a', 'Terminal', file], { timeout: 10000 });
   }
   let config = null; try { config = readConfig(); } catch (_) {}
-  const controller = new SetupController({ config, onSave: restart, signIn, terminal, installerAvailable: fs.existsSync(installer) });
+  const controller = new SetupController({ config, onSave: restart, signIn, terminal, installerAvailable: fs.existsSync(installer), localAvailable: process.env.STARNET_UNIFIED_DESKTOP === '1' });
   const server = createSetupServer(controller);
   server.on('error', () => { console.error('Connection Setup could not bind its private local port.'); process.exitCode = 1; stop(); });
   server.listen(18790, '127.0.0.1', () => { if (config) restart(); });
@@ -67,6 +71,10 @@ async function main() {
     setTimeout(() => process.exit(process.exitCode || 0), 1000).unref();
   }
   process.on('SIGTERM', stop); process.on('SIGINT', stop);
+  if (process.env.STARNET_DESKTOP_STDIN_LIFETIME === '1') {
+    process.stdin.resume();
+    process.stdin.once('end', stop);
+  }
 }
 if (require.main === module) main().catch(() => { console.error('Connection Setup could not start.'); process.exitCode = 1; });
 module.exports = { terminalScript };
