@@ -8,7 +8,8 @@ Upstream history, MIT license and notices are retained.
 - [x] Reproduce and fix the remaining delayed settings movement and overlapping provider text at narrow widths.
 - [x] Match Test & Save and Cancel sizes; open the station automatically after first successful setup.
 - [x] Reuse StarNet components for Gateway details and safe connection controls, including setup access without a keyboard shortcut.
-- [ ] Center the desktop startup placeholder; verify layouts, reconnect behavior and persistence, then rebuild and publish to the private fork.
+- [x] Center the desktop startup placeholder; verify layouts, reconnect behavior and persistence, then rebuild the candidate.
+- [x] Prepare the reviewed follow-up for private-fork publication after installed native verification.
 
 - [x] Follow current upstream for the right conversation panel, superseding the earlier request for its historical numbered-choice presentation.
 
@@ -25,6 +26,14 @@ Latest upstream remains `3ba5b84922f3b62caa4e159999ef3acc82af2a3e`. Its current 
 | The startup placeholder occupied the top-left corner. | Existing wordmark, heading and hint are centered as a group. | Measured centers at 1280x633 and 390x844 matched the viewport center with no horizontal overflow. |
 
 The Gateway dialog inherits the station's text color explicitly because native HTML dialogs otherwise use a user-agent color. At 390px it measures 366px wide with 12px insets, readable shared typography and no internal horizontal overflow. Disconnect affects this viewer session only and keeps saved configuration and GitHub CLI sign-in. Controls require a same-origin custom header, serialize mutations, cancel stale login/poll results, and never replay runs.
+
+### Installed compact-settings candidate, 2026-09-19
+
+Mac and server source: `01572276cd3de085a45486bf0d7d9c30f7f3ac08`. The standard `/Applications/StarNet.app` was rebuilt and installed; deep/strict signature verification, packaged source stamps and remote helper source comparisons passed. Client state and the prior app remain backed up under `work/mac-build/client-backup-20260919-175951/` and `work/mac-build/replaced-apps/`.
+
+All 37 focused remote tests (also under the installed Node 22.23.2 runtime), 50 native Rust tests and eight upstream dialogue/onboarding/settings test entries passed. The website mirror matches 14,534 frontend files. Package checksums passed on Mac and server. The matching server release passed runtime health and unauthenticated gateway refusal; durable data stayed byte-identical at revision 145, with zero runs, prompts, summons, queues and goals. Backup: `/srv/private/starnet-upgrade-backups/01572276cd3de085a45486bf0d7d9c30f7f3ac08/`. Previous release `ed53742c39ede6b7485fc922bea1056bf52ad710` is retained. No real model inference or agent tasks were started.
+
+Installed native verification confirmed saved remote startup, current upstream conversation UI, the shared Gateway dialog, server/account identity, viewer-only disconnect, explicit reconnect and recovery of the same account. Connection Settings opens from Gateway without a keyboard shortcut, retains the saved host and GitHub identity, and shows equally sized Cancel/Test & Save buttons during checks. Test & Save passed SSH, ownership, runtime and SSE validation; Open Station returned to the same saved station with a live feed. The app remains open for Lev to test. Lev's acceptance steps are in `docs/remote/TESTING.md`. Public signing/notarization, Linux arm64 hardware acceptance, the broader upstream gate issues documented below and the official upstream PR remain separate; the PR still waits for Lev's testing.
 
 ## Active follow-up: one desktop app
 
