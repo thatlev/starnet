@@ -3847,6 +3847,153 @@ fn starnet_set_close_to_tray(
     update_lifecycle_preferences(state.inner(), |value| value.close_to_tray = enabled)
 }
 
+/// The original privileged local shell, also created lazily after a remote-only launch.
+/// Remote/setup webviews must never reuse its initialization script or native IPC.
+fn build_main_window(app: &AppHandle, location_choice: &str) -> tauri::Result<tauri::WebviewWindow> {
+    let state = app.state::<AppState>();
+    let port = state.port;
+    let api_token = &state.api_token;
+    // The frontend is served LOCALLY (bundled via frontendDist), NOT from the sidecar's
+    // http origin — Tauri denies IPC (the keychain commands) to remote origins. This shim
+    // rewrites the frontend's root-relative /api/* fetches to the sidecar's port.
+    let init = format!(
+        "window.__STARNET_API__='http://127.0.0.1:{port}';window.__STARNET_API_TOKEN__='{api_token}';var _sf=window.fetch;window.fetch=function(u,o){{if(typeof u==='string'&&u.indexOf('/api/')===0)u=window.__STARNET_API__+u;return _sf(u,o)}};"
+    );
+    // Windows runs WITHOUT native decorations (see the window builder below): this flag
+    // tells the frontend (app/titlebar.js) to render its own themed titlebar with
+    // MIN/MAX/CLOSE riding the Commander's phosphor theme. macOS/browser never set it.
+    #[cfg(windows)]
+    let init = format!("{init}window.__STARNET_CUSTOM_CHROME__=1;");
+
+    let main_window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App(if location_choice == "local" { "index.html" } else { "station-host.html" }.into()))
+        .title("StarNet")
+        .inner_size(1280.0, 832.0)
+        .min_inner_size(960.0, 600.0)
+        .initialization_script(&init)
+        .center()
+        .visible(false)
+        // Page-load hooks fire for Started AND Finished. Reveal only once,
+        // after Finished; a close cancels any still-pending startup reveal.
+        .on_page_load(move |window, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                if let Some(state) = window.app_handle().try_state::<AppState>() {
+                    if state.startup_reveal.finish_load() && remote_desktop::can_reveal_main(window.app_handle()) {
+                        let _ = window.show();
+                    }
+                }
+            }
+        });
+    // Windows: drop the stock titlebar/border — the frontend draws its own themed
+    // chrome (titlebar.js, gated on __STARNET_CUSTOM_CHROME__ above). shadow(true)
+    // keeps the DWM drop shadow, and Tauri's undecorated-resize handling keeps the
+    // edge-drag resize grips working. macOS keeps native decorations until a mac
+    // pass is designed (unverified there — do not blind-apply).
+    #[cfg(windows)]
+    let main_window = {
+        let main_window = main_window.decorations(false).shadow(true);
+        match std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
+            Ok(args) if !args.trim().is_empty() => {
+                // Tauri supplies its own WebView2 environment options, so the ambient
+                // variable is not inherited automatically. Forward an explicit caller
+                // override here; installed QA uses this to open a loopback CDP port.
+                // Normal production launches do not set it and therefore expose no
+                // debugger. Never log the argument value because callers may add paths.
+                log_startup(
+                    &startup_log_path(app),
+                    "webview-browser-args: explicit environment override forwarded",
+                );
+                main_window.additional_browser_args(&args)
+            }
+            _ => main_window,
+        }
+    };
+    let main_window = main_window.build()?;
+
+    // ---- Lane 4D: close-to-tray, explicitly selected or gated on REAL armed work ----
+    // On a close request: ALWAYS intercept + hide immediately (instant feedback, and the poll must not
+    // block the UI thread — review m1), then decide on a worker thread from the classified probe (M2):
+    //   Armed{armed:true}  -> keep the ONE sidecar running, window lives in the tray (explicit there).
+    //   Armed{armed:false} -> nothing armed: drain + kill + exit — full quit, NO background process.
+    //   NotRunning         -> connect refused: no sidecar is listening, so no armed work can exist —
+    //                         full quit is safe (this is the ONLY failure that may quit).
+    //   Ambiguous (x2)     -> the sidecar ACCEPTED the connection but the poll failed (slow/garbled):
+    //                         it is ALIVE and may hold armed work — killing it on that evidence could
+    //                         destroy the work, so after one retry we FAIL OPEN: stay hidden in the
+    //                         tray and let the updater keep polling until the status recovers.
+    // This is the whole product promise: no hidden daemon, and no claim the harness can't prove.
+    {
+        let app_handle = app.clone();
+        let startup_placeholder = location_choice != "local";
+        main_window.on_window_event(move |event| {
+            if startup_placeholder && matches!(event, WindowEvent::Destroyed) {
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    log_startup(&state.startup_log, "startup-window: destroyed after station handoff");
+                }
+            }
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    state.startup_reveal.cancel();
+                    state.close_exit_pending.store(true, Ordering::SeqCst);
+                }
+                api.prevent_close();
+                if let Some(win) = app_handle.get_webview_window("main") {
+                    let _ = win.hide();
+                }
+                let app2 = app_handle.clone();
+                std::thread::spawn(move || {
+                    let Some(state) = app2.try_state::<AppState>() else {
+                        log_startup(&None, "close-request: managed app state unavailable; exiting");
+                        app2.exit(0);
+                        return;
+                    };
+                    let st = state.inner();
+                    let close_to_tray = lifecycle_preferences_snapshot(st).close_to_tray;
+                    log_startup(
+                        &st.startup_log,
+                        format!("close-request: close_to_tray={close_to_tray}"),
+                    );
+                    if close_to_tray && remote_desktop::local_started(&app2) {
+                        // Explicit authority to keep the supervised process alive even when no scheduled
+                        // work is armed. Tray Quit remains the only full-stop action in this mode.
+                        stay_resident_or_quit(&app2, st, "close-to-tray preference");
+                        return;
+                    }
+                    let mut probe = probe_lifecycle_armed(
+                        st.port,
+                        &st.api_token,
+                        Duration::from_millis(1500),
+                    );
+                    if matches!(probe, LifecycleProbe::Ambiguous) {
+                        // One retry before deciding — a single slow poll must not park the app in the
+                        // tray forever when the sidecar is actually healthy and idle.
+                        probe = probe_lifecycle_armed(
+                            st.port,
+                            &st.api_token,
+                            Duration::from_millis(1500),
+                        );
+                    }
+                    match probe {
+                        LifecycleProbe::Armed(l) if l.armed => {
+                            stay_resident_or_quit(&app2, st, "armed background work");
+                        }
+                        LifecycleProbe::Ambiguous => {
+                            // Alive but unwell — fail OPEN (killing could destroy armed work).
+                            stay_resident_or_quit(&app2, st, "armed state ambiguous");
+                        }
+                        _ => {
+                            // Armed{armed:false} or NotRunning: window-close is a full quit.
+                            drain_and_kill_sidecar(st);
+                            app2.exit(0);
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    Ok(main_window)
+}
+
 fn main() {
     tauri::Builder::default()
         // A second launch should focus the running window, not spin up a 2nd sidecar. Registered FIRST per
@@ -4043,18 +4190,6 @@ fn main() {
                 spawn_tray_updater(app.handle().clone());
             }
 
-            // The frontend is served LOCALLY (bundled via frontendDist), NOT from the sidecar's
-            // http origin — Tauri denies IPC (the keychain commands) to remote origins. This shim
-            // rewrites the frontend's root-relative /api/* fetches to the sidecar's port.
-            let init = format!(
-                "window.__STARNET_API__='http://127.0.0.1:{port}';window.__STARNET_API_TOKEN__='{api_token}';var _sf=window.fetch;window.fetch=function(u,o){{if(typeof u==='string'&&u.indexOf('/api/')===0)u=window.__STARNET_API__+u;return _sf(u,o)}};"
-            );
-            // Windows runs WITHOUT native decorations (see the window builder below): this flag
-            // tells the frontend (app/titlebar.js) to render its own themed titlebar with
-            // MIN/MAX/CLOSE riding the Commander's phosphor theme. macOS/browser never set it.
-            #[cfg(windows)]
-            let init = format!("{init}window.__STARNET_CUSTOM_CHROME__=1;");
-
             // Purge stale WebView2 compiled/GPU caches when the packaged build changed, BEFORE the
             // webview window is created — otherwise V8 can run old bytecode against new data
             // (see docs/UPDATE_STATE_SAFETY_AUDIT_2026-07-06.md P0.1). Fails soft; never blocks boot.
@@ -4071,125 +4206,7 @@ fn main() {
                 );
             }
 
-            let main_window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App(if location_choice == "local" { "index.html" } else { "station-host.html" }.into()))
-                .title("StarNet")
-                .inner_size(1280.0, 832.0)
-                .min_inner_size(960.0, 600.0)
-                .initialization_script(&init)
-                .center()
-                .visible(false)
-                // Page-load hooks fire for Started AND Finished. Reveal only once,
-                // after Finished; a close cancels any still-pending startup reveal.
-                .on_page_load(move |window, payload| {
-                    if payload.event() == tauri::webview::PageLoadEvent::Finished {
-                        if let Some(state) = window.app_handle().try_state::<AppState>() {
-                            if state.startup_reveal.finish_load() && remote_desktop::can_reveal_main(window.app_handle()) {
-                                let _ = window.show();
-                            }
-                        }
-                    }
-                });
-            // Windows: drop the stock titlebar/border — the frontend draws its own themed
-            // chrome (titlebar.js, gated on __STARNET_CUSTOM_CHROME__ above). shadow(true)
-            // keeps the DWM drop shadow, and Tauri's undecorated-resize handling keeps the
-            // edge-drag resize grips working. macOS keeps native decorations until a mac
-            // pass is designed (unverified there — do not blind-apply).
-            #[cfg(windows)]
-            let main_window = {
-                let main_window = main_window.decorations(false).shadow(true);
-                match std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
-                    Ok(args) if !args.trim().is_empty() => {
-                        // Tauri supplies its own WebView2 environment options, so the ambient
-                        // variable is not inherited automatically. Forward an explicit caller
-                        // override here; installed QA uses this to open a loopback CDP port.
-                        // Normal production launches do not set it and therefore expose no
-                        // debugger. Never log the argument value because callers may add paths.
-                        log_startup(
-                            &startup_log_path(app.handle()),
-                            "webview-browser-args: explicit environment override forwarded",
-                        );
-                        main_window.additional_browser_args(&args)
-                    }
-                    _ => main_window,
-                }
-            };
-            let main_window = main_window.build()?;
-
-            // ---- Lane 4D: close-to-tray, explicitly selected or gated on REAL armed work ----
-            // On a close request: ALWAYS intercept + hide immediately (instant feedback, and the poll must not
-            // block the UI thread — review m1), then decide on a worker thread from the classified probe (M2):
-            //   Armed{armed:true}  -> keep the ONE sidecar running, window lives in the tray (explicit there).
-            //   Armed{armed:false} -> nothing armed: drain + kill + exit — full quit, NO background process.
-            //   NotRunning         -> connect refused: no sidecar is listening, so no armed work can exist —
-            //                         full quit is safe (this is the ONLY failure that may quit).
-            //   Ambiguous (x2)     -> the sidecar ACCEPTED the connection but the poll failed (slow/garbled):
-            //                         it is ALIVE and may hold armed work — killing it on that evidence could
-            //                         destroy the work, so after one retry we FAIL OPEN: stay hidden in the
-            //                         tray and let the updater keep polling until the status recovers.
-            // This is the whole product promise: no hidden daemon, and no claim the harness can't prove.
-            {
-                let app_handle = app.handle().clone();
-                main_window.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
-                        if let Some(state) = app_handle.try_state::<AppState>() {
-                            state.startup_reveal.cancel();
-                            state.close_exit_pending.store(true, Ordering::SeqCst);
-                        }
-                        api.prevent_close();
-                        if let Some(win) = app_handle.get_webview_window("main") {
-                            let _ = win.hide();
-                        }
-                        let app2 = app_handle.clone();
-                        std::thread::spawn(move || {
-                            let Some(state) = app2.try_state::<AppState>() else {
-                                log_startup(&None, "close-request: managed app state unavailable; exiting");
-                                app2.exit(0);
-                                return;
-                            };
-                            let st = state.inner();
-                            let close_to_tray = lifecycle_preferences_snapshot(st).close_to_tray;
-                            log_startup(
-                                &st.startup_log,
-                                format!("close-request: close_to_tray={close_to_tray}"),
-                            );
-                            if close_to_tray && remote_desktop::local_started(&app2) {
-                                // Explicit authority to keep the supervised process alive even when no scheduled
-                                // work is armed. Tray Quit remains the only full-stop action in this mode.
-                                stay_resident_or_quit(&app2, st, "close-to-tray preference");
-                                return;
-                            }
-                            let mut probe = probe_lifecycle_armed(
-                                st.port,
-                                &st.api_token,
-                                Duration::from_millis(1500),
-                            );
-                            if matches!(probe, LifecycleProbe::Ambiguous) {
-                                // One retry before deciding — a single slow poll must not park the app in the
-                                // tray forever when the sidecar is actually healthy and idle.
-                                probe = probe_lifecycle_armed(
-                                    st.port,
-                                    &st.api_token,
-                                    Duration::from_millis(1500),
-                                );
-                            }
-                            match probe {
-                                LifecycleProbe::Armed(l) if l.armed => {
-                                    stay_resident_or_quit(&app2, st, "armed background work");
-                                }
-                                LifecycleProbe::Ambiguous => {
-                                    // Alive but unwell — fail OPEN (killing could destroy armed work).
-                                    stay_resident_or_quit(&app2, st, "armed state ambiguous");
-                                }
-                                _ => {
-                                    // Armed{armed:false} or NotRunning: window-close is a full quit.
-                                    drain_and_kill_sidecar(st);
-                                    app2.exit(0);
-                                }
-                            }
-                        });
-                    }
-                });
-            }
+            build_main_window(app.handle(), &location_choice)?;
 
             remote_desktop::boot(app.handle(), &location_choice)?;
             Ok(())

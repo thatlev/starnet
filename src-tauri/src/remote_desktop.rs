@@ -241,8 +241,34 @@ pub fn can_reveal_main(app: &AppHandle) -> bool {
             .unwrap_or(false)
 }
 
+fn close_station(app: &AppHandle) {
+    if let Some(main) = app.get_webview_window("main") {
+        // Keep the original local background-work / close-to-tray decision.
+        let _ = main.close();
+    } else {
+        // Remote-only launches retire their placeholder. ExitRequested still
+        // flushes the viewer and stops its helper, leaving the server running.
+        app.exit(0);
+    }
+}
+
+fn retire_startup_window(app: &AppHandle) -> Result<(), String> {
+    if let Some(main) = app.get_webview_window("main") {
+        let url = main.url().map_err(|e| e.to_string())?;
+        if url.path() == "/station-host.html" {
+            // Hiding leaves a native window in switchers (or an empty full-screen
+            // space). Destroy skips CloseRequested, which would quit the app.
+            main.destroy().map_err(|e| e.to_string())?;
+        } else {
+            main.hide().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 fn show_setup_window(app: &AppHandle) -> Result<(), String> {
     if focus(app, SETUP_LABEL) {
+        retire_startup_window(app)?;
         return Ok(());
     }
     let handle = app.clone();
@@ -290,11 +316,12 @@ fn show_setup_window(app: &AppHandle) -> Result<(), String> {
                 reveal(&close_handle);
             } else if local_started(&close_handle) {
                 focus(&close_handle, "main");
-            } else if let Some(main) = close_handle.get_webview_window("main") {
-                let _ = main.close();
+            } else {
+                close_station(&close_handle);
             }
         }
     });
+    retire_startup_window(app)?;
     let _ = window.set_focus();
     Ok(())
 }
@@ -366,9 +393,7 @@ fn show_remote_window(app: &AppHandle, port: u16) -> Result<(), String> {
                 if let Some(remote) = closing.get_webview_window(&closing_label) {
                     let _ = remote.hide();
                 }
-                if let Some(main) = closing.get_webview_window("main") {
-                    let _ = main.close();
-                }
+                close_station(&closing);
             }
         });
         let _ = window.set_focus();
@@ -383,9 +408,7 @@ fn show_remote_window(app: &AppHandle, port: u16) -> Result<(), String> {
         }
     }
     select(app, "remote")?;
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.hide();
-    }
+    retire_startup_window(app)?;
     if let Some(setup) = app.get_webview_window(SETUP_LABEL) {
         let _ = setup.hide();
     }
@@ -470,9 +493,11 @@ pub fn choose_local(app: AppHandle) {
         let _ = app.run_on_main_thread(move || {
             let result = (|| -> Result<(), String> {
                 select(&handle, "local")?;
-                let main = handle
-                    .get_webview_window("main")
-                    .ok_or("Local window unavailable")?;
+                let main = match handle.get_webview_window("main") {
+                    Some(window) => window,
+                    None => super::build_main_window(&handle, "local")
+                        .map_err(|e| e.to_string())?,
+                };
                 let mut url = main.url().map_err(|e| e.to_string())?;
                 if url.path().ends_with("station-host.html") {
                     url.set_path("/index.html");

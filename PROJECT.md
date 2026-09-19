@@ -3,6 +3,16 @@
 Private fork of androoAGI/starnet, updated through v0.12.3 (`3ba5b84922f3b62caa4e159999ef3acc82af2a3e`) on its default `feat/harness-backend` branch.
 Upstream history, MIT license and notices are retained.
 
+## Active follow-up: retire the startup window
+
+- [x] Diagnose the duplicate loading-window entry and retire only the temporary startup shell.
+- [x] Preserve local/remote switching, close/quit and single-instance reveal behavior.
+- [ ] Run native regressions, rebuild/install, verify the window lifecycle and push the private-fork fix.
+
+The running app has one native process and one connection helper; the extra black switcher entry is the retained `main` startup placeholder. Remote handoff previously called `hide()`, keeping that native window alive. Successful remote/setup handoff now destroys only `station-host.html`, without invoking the close handler. The original local window builder and lifecycle handler are reused through a factory so choosing This Computer can create the privileged local shell on demand. Closing a remote-only app without `main` still goes through the bounded remote flush and normal helper shutdown. An existing local station window retains its original background-work lifecycle.
+
+This is a Mac shell change. No server runtime change or restart is needed.
+
 ## Active follow-up: compact settings and Gateway controls
 
 - [x] Reproduce and fix the remaining delayed settings movement and overlapping provider text at narrow widths.
