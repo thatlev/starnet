@@ -8,7 +8,7 @@ Upstream history, MIT license and notices are retained.
 - [x] Reproduce delayed scroll movement and distinguish data refresh from decorative screen flicker.
 - [x] Preserve provider geometry and editors during asynchronous updates; restore the original StarNet conversation renderer and styles without reverting upstream interview logic.
 - [x] Verify delayed updates in the browser; the 15-second reply retains the exact scroll position.
-- [ ] Package, install and push the reviewed display/connection candidate.
+- [x] Package, install and prepare the reviewed display/connection candidate for the private fork.
 
 | Before | After | Evidence |
 | --- | --- | --- |
@@ -21,7 +21,7 @@ Upstream history, MIT license and notices are retained.
 - [x] Research official Hermes first-launch, existing-server and new-server paths.
 - [x] Add an accessible connection/setup flow with durable settings, clear failure recovery and explicit execution location.
 - [x] Provide a reproducible server installation and desktop packaging path suitable for upstream review, without depending on Lev's host/account.
-- [ ] Verify setup, cancellation, authentication and reconnect behavior; rebuild and provide acceptance steps. Official upstream PR still waits for acceptance.
+- [x] Verify setup, cancellation, authentication and reconnect behavior; rebuild and provide acceptance steps. Official upstream PR still waits for acceptance.
 
 The setup screen uses StarNet’s actual shared stylesheets, components, local VT323 font and ASCII wordmark, with layout-only setup CSS. The earlier independent setup styling was superseded by Lev’s request to reuse the actual UI.
 
@@ -32,6 +32,18 @@ The setup helper is isolated from remote station HTML by a separate loopback ori
 | A fresh viewer needed external tools and a manually written connection file. | Native first-launch setup, bundled helpers, GitHub sign-in and a tested SSH form. | Makes installation usable on a clean Mac. |
 | One local origin was reused for every host. | Stable origins per server/account, retaining the existing origin during migration. | Keeps drafts and cached station settings separate. |
 | A missing remote runtime had no desktop setup path. | An explicit new-server installer with visible scope and progress in Terminal. | Installs the reviewed server without replacing an active station. |
+
+### Installed display/setup candidate — 2026-09-19
+
+Mac 0.2.0 (build 5) and server runtime source: `612bc7a696adfc1ff84bf4ac1805c4860c4980cc`. The installed Mac signature passed deep/strict verification, and all eight bundled shared UI assets matched the original frontend sources byte-for-byte. Native inspection confirmed the restored original BOSS heading, top-left question and numbered choices. The setup screen uses the same actual StarNet font, wordmark and components. Native Command-K opened setup, detected the existing GitHub account, and Test & Save passed SSH, ownership, snapshot and event-stream checks against the installed server while retaining local origin 8790.
+
+All 31 focused remote/native tests passed on Mac and Linux. Dialogue (35 assertions), onboarding (70), onboarding legibility (57), refresh and journal checks passed after the final restoration; the website mirror matched. The earlier candidate also passed 20 selected upstream regression suites on both systems. Browser checks covered the 15-second provider reply with zero scroll movement, cancelled/failed setup preserving the prior connection, and setup at desktop, compact and phone widths. The historical dialogue comparison used commit `2f2985718`: identical markup, all computed CSS properties and element bounds for the question and choices. Keyboard selection opens an empty editor and submits the exact entered words.
+
+The packaged Linux installer was exercised in an isolated x86_64 systemd container without Node/npm preinstalled: initial install and readiness succeeded, unauthenticated gateway access was refused, and a second install refused to replace an active station. Both Linux runtime binaries have official checksum verification; arm64 still needs hardware acceptance. A fresh Mac fixture without helper tools on PATH reached first-launch setup using the bundled helpers. Public Developer ID signing/notarization and release publishing remain maintainer steps.
+
+The final server installer passed health and authentication checks. Durable data was byte-identical across installation at save revision 108, with no runs, prompts, summons, queues or goals. Only the ephemeral workspace process-owner claim is excluded from this comparison, following upstream's recovery definition. The first verification attempt conservatively rolled back when that regenerated claim was counted; no persistent data was lost. A transient viewer save conflict after the interrupted upgrade contained only run/rating synchronization timestamps; the original and conflict copy remain preserved, and the built-in reload recovered the current station.
+
+Recovery retains prior runtime `9fda61ae75d0aaebb9cd9a1c2221d9c3eb699b60`, earlier releases, private data/unit backup `/srv/private/starnet-upgrade-backups/612bc7a696adfc1ff84bf4ac1805c4860c4980cc/`, previous Mac bundles and the client backup under `work/mac-build/`. No production inference or agent tasks were created. Lev's visual/functional acceptance and the separately documented broader upstream gate work remain before an official PR.
 
 ## Release: durable providers and stable remote settings
 
