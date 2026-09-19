@@ -14,14 +14,14 @@ Automated verification already exercises a synthetic 429 provider, process resta
 
 ## Unified desktop and connection setup candidate
 
-1. Open the rebuilt **StarNet**. Your existing server, character, custom model and keys should remain. A depleted provider must still let you open Settings.
+1. Open the rebuilt **StarNet**. The loading screen should use the same official outlined StarNet wordmark as the station header. Your existing server, character, custom model and keys should remain. A depleted provider must still let you open Settings.
 2. Open **Settings → Providers**, scroll near the bottom immediately, and keep reading for 30 seconds. Repeat after a Gateway reconnect. There should be no upward shift or repeated card fade. Appearance → Screen Flicker remains available if you deliberately want the CRT effect.
 3. Reopen an unfinished conversation. The right panel should use the original StarNet presentation: its larger BOSS heading, question at the top left and numbered choices. A suggestion opens an empty answer editor; it must not silently submit the suggestion. Type an unsent draft, reopen the app and confirm it is retained.
 4. Open **Station → Connection Setup…** (Command-K). Your SSH host is prefilled. **Check sign-in** should identify your GitHub account. **Test & save** should verify SSH, ownership, runtime and live events without sending a model request. **Open station** should return to the same saved station.
 5. Enter an unreachable test hostname or wrong port and test. Cancel a check too. Both must retain the prior saved connection; **Return to station** should still work. Restore the correct form details afterward.
 6. The **new server** path is for a disposable/fresh Linux machine, not the existing station. Review the install details, launch the Terminal installer, then test and open the resulting empty station. The current package includes Linux x86_64 and arm64 runtimes; arm64 installation still needs hardware acceptance if only x86_64 was available during validation.
 
-Public release signing/notarization and the official upstream PR are separate from this local candidate. Do not erase working data or revoke real provider keys merely to simulate a fresh install.
-
 7. In **Station → Connection Setup**, choose **This Computer**. It should open StarNet’s original local onboarding or your existing local station without GitHub sign-in. Return to **Remote Uplink** and open your saved connection. Quit and reopen: the last selected location should resume. Your local and remote stations must remain separate.
 8. On a fresh user profile, the chooser should appear with **New Server** selected, no personal host prefilled, and the bundled installer available. Do not reset your working profile to perform this check.
+
+Public release signing/notarization and the official upstream PR are separate from this local candidate. Do not erase working data or revoke real provider keys merely to simulate a fresh install.

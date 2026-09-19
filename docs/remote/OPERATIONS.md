@@ -62,7 +62,7 @@ Crew creation, placement, station editing and character rendering happen on the 
 
 The minimal Linux install includes AJV and its small dependency tree. It intentionally omits speech/ML runtimes, native PTY support and a browser distribution. Normal shell/file/model tasks do not require these. A future task needing an interactive PTY, browser engine, local voice, platform SDK or additional build tools needs those dependencies installed explicitly. The service itself never renders the station or requires a GPU.
 
-The locally built Mac app is not notarized. Native visual acceptance remained pending at setup because the Mac was locked. Authenticated proxy access, server state, model catalogue and source-level frontend behavior were verified; no production model inference or real task was run during setup.
+The locally built Mac app is ad-hoc signed and is not notarized. Installed native checks now cover opening the saved remote station, connection setup, switching to the original local runtime and back, draft migration, and complete shutdown. Current candidate evidence is recorded in [PROJECT.md](../../PROJECT.md). Public Developer ID signing/notarization and Lev's acceptance remain separate steps. No production model inference or real task was run during verification.
 
 ## Verification
 
