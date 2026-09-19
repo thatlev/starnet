@@ -3,6 +3,29 @@
 Private fork of androoAGI/starnet, updated through v0.12.3 (`3ba5b84922f3b62caa4e159999ef3acc82af2a3e`) on its default `feat/harness-backend` branch.
 Upstream history, MIT license and notices are retained.
 
+## Active follow-up: compact settings and Gateway controls
+
+- [x] Reproduce and fix the remaining delayed settings movement and overlapping provider text at narrow widths.
+- [x] Match Test & Save and Cancel sizes; open the station automatically after first successful setup.
+- [x] Reuse StarNet components for Gateway details and safe connection controls, including setup access without a keyboard shortcut.
+- [ ] Center the desktop startup placeholder; verify layouts, reconnect behavior and persistence, then rebuild and publish to the private fork.
+
+- [x] Follow current upstream for the right conversation panel, superseding the earlier request for its historical numbered-choice presentation.
+
+### Compact settings and Gateway verification
+
+Latest upstream remains `3ba5b84922f3b62caa4e159999ef3acc82af2a3e`. Its current conversation renderer, including the dark background and text-first answer field, is now used for remote stations too. Browser comparison against that exact commit found identical panel markup, every computed CSS property and element bounds. Only draft preservation hooks remain on top of the renderer. This supersedes the older historical-renderer receipts below.
+
+| Before | After | Why |
+| --- | --- | --- |
+| Removing a delayed account paragraph lost its collapsed 16px bottom margin outside the height reservation. | A flow-root includes that margin in the reserved account surface. | Reproduced a 15.65 CSS pixel scroll shift; both delayed completions and a rebuild then retained scrollTop 3536.52 with a stable 3793px scroll height. |
+| Long endpoints crossed saved-key action buttons in narrow Settings panes. | Endpoints wrap; actions occupy a separate grid row below the provider details. | A 341px card with a long synthetic z.ai URL had separated text and action bounds. |
+| Gateway used separate styling and offered no viewer controls. | Shared term/sn-menu/bb components show server, GitHub account, connection setup, disconnect and reconnect. | 17 browser approval/recovery/focus checks passed; explicit disconnect/reconnect retained the page and recovered identity. No server execution request was sent. |
+| First-time setup needed an additional Open Station click, and busy actions differed in size. | First successful setup opens once automatically; Cancel and Test & Save share bounds. | Browser dimensions were 220x54 at desktop and 156x80 at 390px; VM checks cover stale polls, cancellation and existing connections. |
+| The startup placeholder occupied the top-left corner. | Existing wordmark, heading and hint are centered as a group. | Measured centers at 1280x633 and 390x844 matched the viewport center with no horizontal overflow. |
+
+The Gateway dialog inherits the station's text color explicitly because native HTML dialogs otherwise use a user-agent color. At 390px it measures 366px wide with 12px insets, readable shared typography and no internal horizontal overflow. Disconnect affects this viewer session only and keeps saved configuration and GitHub CLI sign-in. Controls require a same-origin custom header, serialize mutations, cancel stale login/poll results, and never replay runs.
+
 ## Active follow-up: one desktop app
 
 - [x] Merge connection selection into the standard StarNet desktop shell, retaining its actual local runtime, keychain and lifecycle behavior.

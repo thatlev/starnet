@@ -28,7 +28,7 @@ function waitPort(number, child, ms = 30000) {
   return new Promise((resolve, reject) => {
     const end = Date.now() + ms;
     const tick = () => {
-      if (child && child.exitCode !== null) return reject(new Error('Process exited before readiness'));
+      if (child && (child.exitCode !== null || child.signalCode != null)) return reject(new Error('Process exited before readiness'));
       const socket = net.connect({ host: '127.0.0.1', port: number });
       socket.once('connect', () => { socket.destroy(); resolve(); });
       socket.once('error', () => { socket.destroy(); if (Date.now() >= end) reject(new Error('Connection timed out')); else setTimeout(tick, 150); });
@@ -84,8 +84,9 @@ async function connect(o) {
   const localPort = port(cfg.port, 8790), remotePort = port(cfg['gateway-port'], 18791);
   await assertFree(localPort);
   const tunnelPort = await freePort();
-  let ssh, ready = false, stopping = false, reconnectTimer, delay = 1000, session = null, login = null;
+  let ssh, ready = false, stopping = false, paused = false, reconnectTimer, delay = 1000, session = null, login = null, loginAbort = null, generation = 0;
   function startTunnel() {
+    if (stopping || paused) return;
     ready = false;
     ssh = spawn('ssh', ['-N', '-T', ...sshArgs(cfg), '-o', 'ExitOnForwardFailure=yes',
       '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=2', '-L', '127.0.0.1:' + tunnelPort + ':127.0.0.1:' + remotePort, cfg.host],
@@ -94,37 +95,63 @@ async function connect(o) {
     ssh.stderr.on('data', () => {});
     ssh.on('error', () => {});
     ssh.once('close', () => {
+      if (ssh !== current) return;
       ready = false;
-      if (!stopping) { console.error('SSH connection lost; reconnecting. Server work continues.'); reconnectTimer = setTimeout(startTunnel, delay); delay = Math.min(delay * 2, 5000); }
+      if (!stopping && !paused) { console.error('SSH connection lost; reconnecting. Server work continues.'); reconnectTimer = setTimeout(startTunnel, delay); delay = Math.min(delay * 2, 5000); }
     });
     const current = ssh;
     waitPort(tunnelPort, current).then(() => { if (ssh === current && current.exitCode === null) { ready = true; delay = 1000; } }).catch(() => current.kill());
   }
   const getSession = async () => {
-    if (!ready) throw new Error('SSH reconnecting');
+    if (paused || !ready) throw new Error('SSH disconnected');
     if (session && session.expiresAt > Date.now() + 5 * 60 * 1000) return session;
     if (login) return login;
-    login = (async () => {
+    const epoch = generation, controller = new AbortController(); loginAbort = controller;
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const attempt = (async () => {
       const response = await fetch('http://127.0.0.1:' + tunnelPort + '/remote/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ githubToken: ghToken() }), signal: AbortSignal.timeout(15000)
+        body: JSON.stringify({ githubToken: ghToken() }), signal: controller.signal
       });
       if (!response.ok) throw new Error('GitHub station login failed (' + response.status + ')');
       const result = await response.json();
       if (result.user?.id !== Number(cfg.owner)) throw new Error('The gateway returned an unexpected owner');
+      if (generation !== epoch || paused) throw new Error('Connection changed');
       session = result;
       console.log('Connected as ' + result.user.login + ' · execution on ' + cfg.host);
       return result;
-    })().finally(() => { login = null; });
-    return login;
+    })().finally(() => { clearTimeout(timeout); if (login === attempt) { login = null; loginAbort = null; } });
+    login = attempt;
+    return attempt;
   };
+  async function changeConnection(reconnect) {
+    paused = true; generation++; loginAbort?.abort(); loginAbort = null; login = null;
+    clearTimeout(reconnectTimer);
+    const previous = session; session = null;
+    if (ready && previous) {
+      try { await fetch('http://127.0.0.1:' + tunnelPort + '/remote/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + previous.token }, signal: AbortSignal.timeout(2000) }); } catch (_) {}
+    }
+    ready = false;
+    const previousSSH = ssh; ssh = null;
+    if (previousSSH && previousSSH.exitCode === null && previousSSH.signalCode === null) {
+      await new Promise(resolve => {
+        const timeout = setTimeout(() => { previousSSH.kill('SIGKILL'); }, 2000);
+        previousSSH.once('close', () => { clearTimeout(timeout); resolve(); });
+        previousSSH.kill('SIGTERM');
+      });
+    }
+    if (reconnect && !stopping) { paused = false; delay = 1000; startTunnel(); }
+  }
   startTunnel();
-  const client = createClient({ gatewayPort: tunnelPort, localPort, getSession, invalidateSession: () => { session = null; } });
+  const client = createClient({ gatewayPort: tunnelPort, localPort, getSession, invalidateSession: () => { session = null; }, connection: {
+    status: () => ({ host: cfg.host, paused, connected: ready && !!session, user: session?.user || null }),
+    reconnect: () => changeConnection(true), disconnect: () => changeConnection(false)
+  } });
   await new Promise((resolve, reject) => { client.once('error', reject); client.listen(localPort, '127.0.0.1', resolve); });
   console.log('Mac station: http://127.0.0.1:' + localPort);
   const stop = () => {
     if (stopping) return;
-    stopping = true; clearTimeout(reconnectTimer); client.closeAllConnections(); client.close(); ssh?.kill('SIGTERM');
+    stopping = true; loginAbort?.abort(); clearTimeout(reconnectTimer); client.closeAllConnections(); client.close(); ssh?.kill('SIGTERM');
     setTimeout(() => process.exit(0), 200).unref();
   };
   process.on('SIGINT', stop); process.on('SIGTERM', stop);

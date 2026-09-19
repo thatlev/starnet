@@ -75,3 +75,30 @@ test('gateway reuses its runtime connection without retrying requests', async ()
     assert.equal(sockets.size, 1, 'sequential requests reuse one TCP connection');
   } finally { await close(gateway); await close(runtime); }
 });
+
+test('viewer connection controls require same-origin custom-header requests and serialize changes', async () => {
+  let sessions = 0, disconnects = 0, reconnects = 0, release, entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const client = createClient({ gatewayPort: 1, localPort: 8790, getSession: async () => { sessions++; throw Error('offline'); }, connection: {
+    status: () => ({ host: 'fixture-server', paused: disconnects > reconnects }),
+    disconnect: async () => { disconnects++; entered(); await new Promise(resolve => { release = resolve; }); },
+    reconnect: async () => { reconnects++; }
+  } });
+  const base = 'http://127.0.0.1:' + await listen(client);
+  const headers = { 'x-starnet-client': '1', 'Content-Type': 'application/json' };
+  const post = (action, extra = {}) => fetch(base + '/remote/client/' + action, { method: 'POST', headers: { ...headers, ...extra }, body: '{}' });
+  try {
+    assert.equal((await fetch(base + '/remote/client/status')).status, 403);
+    assert.equal((await post('disconnect', { Origin: 'https://evil.example' })).status, 403);
+    assert.equal((await post('disconnect', { 'sec-fetch-site': 'cross-site' })).status, 403);
+    assert.equal((await fetch(base + '/remote/client/disconnect', { headers })).status, 405);
+    assert.deepEqual(await (await fetch(base + '/remote/client/status', { headers })).json(), { host: 'fixture-server', paused: false });
+    const disconnect = post('disconnect'); await started;
+    assert.equal((await post('reconnect')).status, 409);
+    release(); assert.equal((await disconnect).status, 200);
+    assert.equal((await (await fetch(base + '/remote/client/status', { headers })).json()).paused, true);
+    assert.equal((await post('reconnect')).status, 200);
+    assert.equal(sessions, 0, 'controls remain usable offline and never authenticate or forward a runtime request');
+    assert.equal(disconnects, 1); assert.equal(reconnects, 1);
+  } finally { release?.(); await close(client); }
+});

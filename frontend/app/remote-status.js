@@ -17,67 +17,52 @@ document.addEventListener('DOMContentLoaded', () => {
     settled: () => setTimeout(() => { if (typeof Chat !== 'undefined' && Chat.refreshRemoteTranscript) Chat.refreshRemoteTranscript(); }, 100)
   });
   for (const name of ['agent.run.start', 'agent.token', 'agent.tool_call', 'agent.tool_result', 'permission.prompt', 'agent.run.end']) U.bus.on(name, p => mirror.event(name, p));
-  const style = document.createElement('style');
-  // Square station surfaces intentionally retain zero corner radius, including
-  // their inset controls. No floating status overlay competes with the scene.
-  style.textContent = `
-    #gateway-control {display:inline-flex;align-items:center;gap:6px;flex-shrink:0;min-height:32px;padding:4px 8px;border:1px solid transparent;border-radius:0;background:transparent;color:var(--text,#eec88f);font:18px/1.2 'VT323',monospace;letter-spacing:1px;text-transform:uppercase;cursor:pointer;text-shadow:none;}
-    #gateway-control:hover {background:var(--ph-faint,#1e1404);border-color:var(--ph-dim,#b9791c);}
-    #gateway-control[data-attention="true"] {color:var(--warn,#ffe97a);border-color:currentColor;}
-    #gateway-control .gateway-dot {width:5px;height:5px;background:var(--ok,#7bc88a);flex-shrink:0;}
-    #gateway-control[data-attention="true"] .gateway-dot {background:currentColor;}
-    #gateway-control:focus-visible,#remote-review :is(button,summary):focus-visible {outline:2px solid var(--ph-bright,#ffd9a3);outline-offset:2px;}
-    #remote-review {box-sizing:border-box;margin:auto;color:var(--text,#eec88f);background:var(--panel2,#0c0704);border:2px solid var(--ph-dim,#b9791c);box-shadow:var(--bezel);padding:24px;width:500px;max-width:calc((100vw - 24px) * var(--sn-unzoom,1));max-height:calc((100dvh - 24px) * var(--sn-unzoom,1));overflow:auto;font:20px/1.3 'VT323',monospace;letter-spacing:.5px;border-radius:0;text-shadow:none;}
-    #remote-review::backdrop {background:#000a;}
-    #remote-review header {display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:16px;}
-    #remote-review h2 {font:inherit;font-size:26px;letter-spacing:2px;text-transform:uppercase;color:var(--ph-bright,#ffd9a3);margin:0;}
-    #remote-review p {margin:12px 0;overflow-wrap:anywhere;}
-    #remote-review .gateway-state {margin:0;color:var(--ok,#7bc88a);}
-    #remote-review[data-connected="false"] .gateway-state {color:var(--warn,#ffe97a);}
-    #remote-review article,#remote-review details {border-top:1px solid var(--ph-dim,#b9791c);padding-top:16px;margin-top:16px;}
-    #remote-review pre {white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;max-height:200px;overflow:auto;}
-    #remote-review button {font:inherit;letter-spacing:1px;color:var(--ph);background:transparent;border:1px solid var(--ph-dim,#b9791c);padding:6px 10px;min-height:32px;cursor:pointer;border-radius:0;}
-    #remote-review button:hover:not(:disabled) {background:var(--ph-faint,#1e1404);}
-    #remote-review button:disabled {opacity:.5;cursor:default;}
-    #remote-review article button + button {margin-left:8px;}
-    #remote-review summary {cursor:pointer;}
-    #gateway-announcement {position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
-    @media(max-width:600px){#gateway-control{font-size:15px;padding:4px;}#remote-review{padding:16px;}}
-  `;
-  document.head.append(style);
   function text(tag, value, target) { const el = document.createElement(tag); el.textContent = value; target.append(el); return el; }
-  const review = document.createElement('button'); review.id = 'gateway-control'; review.type = 'button';
+  const review = document.createElement('button'); review.id = 'gateway-control'; review.className = 'bb sm'; review.type = 'button';
   review.setAttribute('aria-haspopup', 'dialog'); review.setAttribute('aria-controls', 'remote-review');
-  text('span', '', review).className = 'gateway-dot'; review.firstChild.setAttribute('aria-hidden', 'true');
+  text('span', '', review).className = 'conn-dot'; review.firstChild.setAttribute('aria-hidden', 'true');
   const label = text('span', 'Gateway', review);
   document.querySelector('#bottombar .bb-right')?.append(review);
   const announcement = document.createElement('span'); announcement.id = 'gateway-announcement'; announcement.setAttribute('role', 'status');
   document.body.append(announcement);
-  const dialog = document.createElement('dialog'); dialog.id = 'remote-review'; dialog.setAttribute('aria-labelledby', 'gateway-title');
+  const dialog = document.createElement('dialog'); dialog.id = 'remote-review'; dialog.className = 'term sn-menu'; dialog.setAttribute('aria-labelledby', 'gateway-title');
   document.body.append(dialog);
-  const header = text('header', '', dialog);
-  text('h2', 'Gateway', header).id = 'gateway-title';
-  const close = text('button', 'Close', header); close.type = 'button'; close.onclick = () => dialog.close();
-  const status = text('p', '', dialog); status.className = 'gateway-state';
-  text('p', 'Your agents keep running when you close this app.', dialog);
-  const activity = text('p', '', dialog);
-  const recovery = text('p', '', dialog);
-  const retry = text('button', 'Retry connection', dialog); retry.type = 'button'; retry.hidden = true;
-  retry.onclick = () => connection === 'expired' ? window.location.reload() : poll();
-  const goals = text('div', '', dialog); goals.style.whiteSpace = 'pre-line';
-  const approvals = text('section', '', dialog); approvals.setAttribute('aria-label', 'Decisions');
-  const details = text('details', '', dialog);
+  const header = text('header', '', dialog); header.className = 'term-head';
+  const title = text('span', 'GATEWAY', header); title.id = 'gateway-title'; title.className = 'term-title';
+  const close = text('button', '×', header); close.className = 'term-x'; close.setAttribute('aria-label', 'Close Gateway'); close.type = 'button'; close.onclick = () => dialog.close();
+  const body = text('div', '', dialog); body.className = 'term-body';
+  const status = text('p', '', body); status.className = 'gateway-state';
+  const facts = text('dl', '', body); facts.className = 'gateway-facts sn-menu-options';
+  text('dt', 'SERVER', facts).className = 'dim';
+  const serverName = text('dd', 'Connecting…', facts);
+  text('dt', 'ACCOUNT', facts).className = 'dim';
+  const accountName = text('dd', 'Checking sign-in…', facts);
+  text('p', 'Your agents keep running when you close or disconnect this app.', body).className = 'sn-menu-note';
+  const activity = text('p', '', body);
+  const recovery = text('p', '', body); recovery.className = 'sn-menu-note';
+  const actions = text('div', '', body); actions.className = 'gateway-actions';
+  const retry = text('button', '↻ RECONNECT', actions); retry.className = 'bb'; retry.type = 'button'; retry.hidden = true;
+  retry.onclick = () => clientAvailable ? changeConnection('reconnect') : poll();
+  const setup = text('button', '⌁ CONNECTION SETTINGS', actions); setup.className = 'bb'; setup.type = 'button'; setup.hidden = !window.__STARNET_CONNECTION_SETUP__;
+  setup.onclick = () => { dialog.close(); window.location.href = 'starnet-connect://setup'; };
+  const disconnect = text('button', 'DISCONNECT THIS APP', actions); disconnect.className = 'bb'; disconnect.type = 'button'; disconnect.hidden = true;
+  disconnect.onclick = () => changeConnection('disconnect');
+  const actionError = text('p', '', body); actionError.className = 'msg bad'; actionError.setAttribute('role', 'alert'); actionError.hidden = true;
+  const goals = text('div', '', body); goals.style.whiteSpace = 'pre-line';
+  const approvals = text('section', '', body); approvals.setAttribute('aria-label', 'Decisions');
+  const details = text('details', '', body); details.className = 'sn-menu-options';
   text('summary', 'Connection details', details);
-  const identity = text('p', 'Loading connection details…', details);
+  text('p', 'Private SSH connection. Execution and provider keys stay on your server.', details).className = 'sn-menu-note';
   const timing = text('p', '', details);
   let latest = null, pending = [], busy = false, latency = null, goalCursor = '';
   let connection = 'connecting', pendingSignature = '', opener = null;
+  let clientAvailable = false, paused = false, changing = false, pollController = null, connectionGeneration = 0;
   function setText(el, value) { if (el.textContent !== value) el.textContent = value; }
   function render() {
     const connected = connection === 'connected';
     const decisions = `${pending.length} decision${pending.length === 1 ? '' : 's'}`;
-    const stateLabel = connected ? 'Connected' : connection === 'expired' ? 'Session needs refreshing' : 'Reconnecting';
-    const compact = !connected ? (connection === 'expired' ? 'Reload needed' : 'Reconnecting') : pending.length ? decisions : '';
+    const stateLabel = paused ? 'Disconnected' : connected ? 'Connected' : 'Reconnecting';
+    const compact = !connected ? stateLabel : pending.length ? decisions : '';
     setText(label, compact ? `Gateway · ${compact}` : 'Gateway');
     review.dataset.attention = String(!connected || pending.length > 0);
     review.setAttribute('aria-label', `Gateway: ${stateLabel.toLowerCase()}${pending.length ? ', ' + decisions : ''}`);
@@ -85,11 +70,12 @@ document.addEventListener('DOMContentLoaded', () => {
     dialog.dataset.connected = String(connected);
     setText(status, stateLabel);
     setText(activity, latest ? `${connected ? '' : 'Last known: '}${latest.runs.length} running · ${pending.length} awaiting a decision` : 'Waiting for station activity.');
-    setText(recovery, connection === 'expired' ? 'Reload to renew your session. Copy any unsent text first.' : !connected ? 'Reconnecting automatically. Station activity will catch up when the connection returns.' : '');
+    setText(recovery, paused ? 'Disconnected for this app session. Reconnect when you are ready.' : !connected ? 'Reconnecting automatically. Station activity will catch up when the connection returns.' : '');
     recovery.hidden = connected;
     retry.hidden = connected;
-    retry.textContent = connection === 'expired' ? 'Reload station' : 'Retry connection';
-    retry.disabled = busy;
+    retry.disabled = changing || (busy && !clientAvailable);
+    disconnect.hidden = !clientAvailable || paused; disconnect.disabled = changing;
+    setup.disabled = changing;
     setText(timing, latency === null ? 'Latency unavailable' : `${latency} ms round trip${connected ? '' : ' (last connection)'}`);
     setText(goals, (latest?.remote?.goals || []).map(row => `${row.goal.status} · ${row.goal.turnsUsed}/${row.goal.maxTurns} turns · ${row.goal.goal}`).join('\n'));
     approvals.hidden = pending.length === 0;
@@ -110,7 +96,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const buttons = [];
         const error = document.createElement('p'); error.setAttribute('role', 'alert'); error.hidden = true;
         for (const [buttonLabel, decision] of [['Allow once', 'once'], ['Deny', 'deny']]) {
-          const button = text('button', buttonLabel, article); button.type = 'button'; buttons.push(button);
+          const button = text('button', buttonLabel, article); button.type = 'button'; button.className = 'bb sm'; buttons.push(button);
           button.onclick = async () => {
             article.dataset.busy = 'true'; buttons.forEach(b => { b.disabled = true; }); error.hidden = true;
             try {
@@ -130,13 +116,48 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     for (const button of approvals.querySelectorAll('button')) button.disabled = !connected || button.closest('article').dataset.busy === 'true';
   }
+  async function clientStatus(generation) {
+    const r = await fetch('/remote/client/status', { headers: { 'x-starnet-client': '1' }, cache: 'no-store', signal: AbortSignal.timeout(3000) });
+    if (!r.ok) return;
+    const client = await r.json();
+    if (generation !== connectionGeneration || changing) return;
+    clientAvailable = true; paused = !!client.paused;
+    if (client.host) setText(serverName, client.host);
+    if (client.user?.login) setText(accountName, '@' + client.user.login);
+    if (paused) { connection = 'disconnected'; setText(accountName, 'Disconnected'); }
+  }
   async function loadIdentity() {
+    const generation = connectionGeneration;
     try {
+      await clientStatus(generation);
+      if (generation !== connectionGeneration || changing) return;
+      if (paused) { render(); return; }
       const r = await fetch('/remote/status', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
       if (!r.ok) throw new Error('disconnected');
       const remote = await r.json();
-      identity.textContent = `${remote.host || 'Remote server'} · GitHub${remote.user?.login ? ' @' + remote.user.login : ''} · Headless execution`;
-    } catch (_) { identity.textContent = 'Connection details unavailable. Reopen this panel to retry.'; }
+      if (generation !== connectionGeneration || changing) return;
+      if (!clientAvailable) setText(serverName, remote.host || 'Remote server');
+      setText(accountName, remote.user?.login ? '@' + remote.user.login : 'Account unavailable');
+    } catch (_) {
+      if (generation !== connectionGeneration || changing) return;
+      if (serverName.textContent === 'Connecting…') setText(serverName, 'Server unavailable');
+      if (accountName.textContent === 'Checking sign-in…') setText(accountName, 'Sign-in unavailable');
+    }
+    render();
+  }
+  async function changeConnection(action) {
+    if (changing) return;
+    changing = true; connectionGeneration++; pollController?.abort(); actionError.hidden = true;
+    connection = 'reconnecting'; render();
+    try {
+      const r = await fetch('/remote/client/' + action, { method: 'POST', headers: { 'x-starnet-client': '1', 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(10000) });
+      if (!r.ok) throw new Error('Connection change could not be confirmed. Try again.');
+      const client = await r.json(); paused = !!client.paused;
+      connection = paused ? 'disconnected' : 'reconnecting';
+      if (paused) setText(accountName, 'Disconnected');
+    } catch (error) { actionError.textContent = error.message; actionError.hidden = false; }
+    finally { changing = false; render(); }
+    if (!paused) { await poll(); loadIdentity(); }
   }
   function open() {
     if (!dialog.open) { opener = document.activeElement; render(); dialog.showModal(); }
@@ -147,26 +168,33 @@ document.addEventListener('DOMContentLoaded', () => {
   dialog.addEventListener('close', () => { if (opener?.isConnected && opener.offsetParent !== null) opener.focus(); });
   window.StarNetGateway = Object.freeze({ open });
   async function poll() {
-    if (busy) return; busy = true;
+    if (busy || changing) return; busy = true;
+    const generation = connectionGeneration, controller = new AbortController(); pollController = controller;
+    const timeout = setTimeout(() => controller.abort(), 15000);
     const started = performance.now();
     try {
-      let r = await fetch('/api/state/snapshot', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+      if (paused) return;
+      let r = await fetch('/api/state/snapshot', { cache: 'no-store', signal: controller.signal });
       if (r.status === 403) {
         // A restarted server has a new per-launch API token. Renew it through
         // the existing authenticated gateway, preserving this page and its drafts.
-        const bootstrap = await fetch('/remote/bootstrap', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+        const bootstrap = await fetch('/remote/bootstrap', { cache: 'no-store', signal: controller.signal });
         if (!bootstrap.ok) throw new Error('Reconnecting');
         const credentials = await bootstrap.json();
         if (!/^[a-f0-9]{64}$/.test(credentials.token || '')) throw new Error('Invalid station credential');
         window.__STARNET_API_TOKEN__ = credentials.token;
-        r = await fetch('/api/state/snapshot', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
+        r = await fetch('/api/state/snapshot', { cache: 'no-store', signal: controller.signal });
       }
       if (!r.ok) throw new Error('disconnected');
-      latest = await r.json(); latency = Math.round(performance.now() - started);
+      const snapshot = await r.json();
+      if (generation !== connectionGeneration) return;
+      latest = snapshot; latency = Math.round(performance.now() - started);
       pending = latest.prompts || [];
       mirror.snapshot(latest);
+      const reconnected = connection !== 'connected';
       connection = 'connected';
-      const canAdopt = () => !document.activeElement?.matches('textarea,input,[contenteditable="true"]')
+      if (reconnected && dialog.open) loadIdentity();
+      const canAdopt = () => !paused && !changing && generation === connectionGeneration && !document.activeElement?.matches('textarea,input,[contenteditable="true"]')
         && (typeof Chat === 'undefined' || !Chat.canRefreshRemote || Chat.canRefreshRemote());
       if (canAdopt() && latest.runs.length === 0 && typeof CloudSave !== 'undefined' && CloudSave.refreshRemote
         && Number(latest.remote?.saveRevision) > CloudSave.revision()) {
@@ -177,8 +205,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (canAdopt() && latest.runs.length === 0 && nextGoals !== goalCursor && typeof Chat !== 'undefined' && Chat.refreshRemoteTranscript) {
         await Chat.refreshRemoteTranscript(); goalCursor = nextGoals;
       }
-    } catch (_) { connection = 'reconnecting'; }
-    finally { busy = false; render(); }
+    } catch (_) { if (generation === connectionGeneration) connection = 'reconnecting'; }
+    finally { clearTimeout(timeout); pollController = null; busy = false; render(); }
   }
   render(); poll(); setInterval(poll, 5000);
   window.addEventListener('online', poll);

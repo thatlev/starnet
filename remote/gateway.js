@@ -126,13 +126,28 @@ function createGateway({ runtimePort, runtimeToken, ownerId, verifyIdentity = gi
   return server;
 }
 
-function createClient({ gatewayPort, localPort, getSession, invalidateSession }) {
+function createClient({ gatewayPort, localPort, getSession, invalidateSession, connection }) {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 8 });
+  let changingConnection = false;
   const server = http.createServer(async (req, res) => {
     req.socket.setNoDelay(true);
     if (!isAllowedHost(req.headers.host) || !isAllowedApiOrigin(req.headers.origin, localPort)
       || req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, { error: 'untrusted origin' });
     try {
+      if (req.url.startsWith('/remote/client/')) {
+        // A custom header forces a preflight for hostile browser origins. These
+        // controls only affect this viewer, never server execution or credentials.
+        if (req.headers['x-starnet-client'] !== '1') return json(res, 403, { error: 'Open Gateway to manage this connection.' });
+        if (!connection) return json(res, 404, { error: 'Connection controls unavailable' });
+        if (req.url === '/remote/client/status' && req.method === 'GET') return json(res, 200, connection.status());
+        const action = req.url === '/remote/client/reconnect' ? 'reconnect' : req.url === '/remote/client/disconnect' ? 'disconnect' : null;
+        if (!action || req.method !== 'POST' || !String(req.headers['content-type']).startsWith('application/json')) return json(res, 405, { error: 'Expected connection action' });
+        await readJson(req, 1024);
+        if (changingConnection) return json(res, 409, { error: 'Connection change already in progress' });
+        changingConnection = true;
+        try { await connection[action](); return json(res, 200, connection.status()); }
+        finally { changingConnection = false; }
+      }
       const session = await getSession();
       proxy(req, res, { port: gatewayPort, agent, headers: { authorization: 'Bearer ' + session.token }, onUnauthorized: invalidateSession });
     } catch (_) { json(res, 503, { error: 'Reconnecting to your server. Existing runs continue on the server.' }); }

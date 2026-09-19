@@ -19,7 +19,7 @@ function terminalScript(cfg, install, archive) {
   const job = `cd ${remoteDir} && tar -xzf server.tar.gz && if [ "$(id -u)" = 0 ]; then bash remote/install-linux.sh ${cfg.owner}; else sudo bash remote/install-linux.sh ${cfg.owner}; fi`;
   return `#!/bin/bash\nset -euo pipefail\necho 'StarNet will install a private Linux service. It will not replace a running station.'\n${first} ${quote('umask 077; mkdir ' + remoteDir)}\nscp -o StrictHostKeyChecking=yes ${scpArgs} ${quote(archive)} ${quote(cfg.host + ':' + remoteDir + '/server.tar.gz')}\n${first} ${quote(job)}\n${first} ${quote('rm -rf -- ' + remoteDir)}\nprintf '\\nInstallation complete. Return to StarNet and test the connection.\\n'\n`;
 }
-async function main() {
+async function main({ port = 18790 } = {}) {
   process.umask(0o077);
   if (process.env.STARNET_UNIFIED_DESKTOP === '1') {
     try { require('./migrate-viewer').exportViewerStorage(); }
@@ -61,7 +61,7 @@ async function main() {
   const controller = new SetupController({ config, onSave: restart, signIn, terminal, installerAvailable: fs.existsSync(installer), localAvailable: process.env.STARNET_UNIFIED_DESKTOP === '1' });
   const server = createSetupServer(controller);
   server.on('error', () => { console.error('Connection Setup could not bind its private local port.'); process.exitCode = 1; stop(); });
-  server.listen(18790, '127.0.0.1', () => { if (config) restart(); });
+  server.listen(port, '127.0.0.1', () => { if (config) restart(); });
   // A crashed client can restart; the supervisor remains available for configuration repair.
   const timer = setInterval(() => { if (controller.config && (!proxy || proxy.exitCode !== null || proxy.signalCode !== null)) restart(); }, 3000);
   function stop() {
@@ -77,4 +77,4 @@ async function main() {
   }
 }
 if (require.main === module) main().catch(() => { console.error('Connection Setup could not start.'); process.exitCode = 1; });
-module.exports = { terminalScript };
+module.exports = { terminalScript, main };

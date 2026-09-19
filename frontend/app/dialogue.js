@@ -247,12 +247,12 @@ const Dialogue = (() => {
     cfg = cfg || {};
     return new Promise(resolve => {
       ensure(); clearKeys(); clearOpts(); clearGate(true); flushSay();
-      panel.classList.toggle('fnv-text-first', !!(cfg.allowCustom && cfg.customFirst && !window.__STARNET_REMOTE__));
+      panel.classList.toggle('fnv-text-first', !!(cfg.allowCustom && cfg.customFirst));
       let settled = false;
       const finishPick = res => { if (settled) return; settled = true; pendingPick = null; clearKeys(); sfx('click'); resolve(res); };
       typeInto(norm(cfg.lines), () => {
         renderOptions(cfg, finishPick);
-        if ((cfg.draft || (window.__STARNET_REMOTE__ && cfg.customValue)) && cfg.allowCustom) openCustom(cfg, finishPick);
+        if (cfg.draft && cfg.allowCustom && !cfg.customFirst) openCustom(cfg, finishPick);
       });
     });
   }
@@ -282,7 +282,7 @@ const Dialogue = (() => {
     if (!optsEl) { finishPick({ value: '', skip: true }); return; }
     pendingPick = { cfg, finishPick };   // arm the composer path (Dialogue.answer) for THIS question
     optsEl.innerHTML = '';
-    if (cfg.allowCustom && cfg.customFirst && !window.__STARNET_REMOTE__) {
+    if (cfg.allowCustom && cfg.customFirst) {
       renderConversation(cfg, finishPick);
       return;
     }
@@ -295,15 +295,7 @@ const Dialogue = (() => {
       const num = document.createElement('span'); num.className = 'fnv-num'; num.textContent = (idx + 1) + '.';
       const lbl = document.createElement('span'); lbl.className = 'fnv-opt-l'; lbl.textContent = o.label;
       b.appendChild(num); b.appendChild(lbl);
-      b.onclick = () => {
-        // Keep StarNet's original numbered-choice UI in the remote viewer.
-        // New interview suggestions still open the user's own answer editor.
-        if (window.__STARNET_REMOTE__ && cfg.allowCustom && cfg.customFirst && !o.skip && !o.open && !o.help) {
-          openCustom({ ...cfg, customPlaceholder: o.steer || cfg.customPlaceholder }, finishPick);
-        } else {
-          finishPick({ value: o.value != null ? o.value : o.label, label: o.label, skip: !!o.skip, ...(o.help ? { help: true } : {}) });
-        }
-      };
+      b.onclick = () => finishPick({ value: o.value != null ? o.value : o.label, label: o.label, skip: !!o.skip });
       optsEl.appendChild(b); rows.push(b);
     });
     let customBtn = null;
@@ -352,13 +344,13 @@ const Dialogue = (() => {
     inp.placeholder = cfg.customPlaceholder || 'type your answer…';
     inp.setAttribute('aria-label', 'Your answer');
     const send = document.createElement('button'); send.className = 'fnv-custom-send'; send.type = 'button';
-    inp.value = cfg.customValue || '';
+    inp.value = cfg.draft == null ? (cfg.customValue || '') : cfg.draft;
     send.textContent = cfg.submitLabel || 'Send →'; send.disabled = !inp.value.trim();
     const submit = () => {
       const value = inp.value.trim();
       if (value) finishPick({ value, label: value, custom: true });
     };
-    inp.addEventListener('input', () => { send.disabled = !inp.value.trim(); if (cfg.onCustomInput) cfg.onCustomInput(inp.value); });
+    inp.addEventListener('input', () => { send.disabled = !inp.value.trim(); cfg.draft = inp.value; cfg.onDraft?.(inp.value); if (cfg.onCustomInput) cfg.onCustomInput(inp.value); });
     inp.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
     });

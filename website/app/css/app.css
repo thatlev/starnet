@@ -5,6 +5,10 @@
 /* ---------- screen scaffolding ---------- */
 .screen { position: fixed; inset: 0; display: none; z-index: 10; }
 .screen.active { display: flex; }
+#station-host { align-items: center; justify-content: center; padding: var(--s-4); text-align: center; }
+#station-host > div { max-width: 100%; }
+#station-host .logo-img { margin: 0 auto var(--s-3); }
+#station-host h2 { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 
 /* boot veil — the neutral holding-card shown during init()'s async gap before the boot router picks a
    real screen. Solid ink so there's never a flash of the wrong screen (the old #screen-connect .active

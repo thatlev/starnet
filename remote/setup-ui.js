@@ -2,7 +2,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const token = document.querySelector('meta[name=setup-token]').content;
-  let initialized = false, polling = false, current = null, lastMessage = null, mode = 'new';
+  let initialized = false, polling = false, current = null, lastMessage = null, mode = 'new', openAfterTest = false;
   const input = () => ({ host: $('host').value.trim(), 'ssh-port': $('ssh-port').value, 'gateway-port': $('gateway-port').value });
   function invalidate() { $('open').hidden = true; $('test').hidden = false; }
   function render(state) {
@@ -26,6 +26,10 @@
     $('return').disabled = state.busy;
     const canOpen = !state.busy && state.phase === 'connected' && state.config && JSON.stringify(input()) === JSON.stringify({ host: state.config.host, 'ssh-port': String(state.config['ssh-port'] || ''), 'gateway-port': String(state.config['gateway-port']) });
     $('test').hidden = !!canOpen; $('open').hidden = !canOpen;
+    if (openAfterTest && !state.busy && (canOpen || state.phase === 'error')) {
+      openAfterTest = false;
+      if (canOpen) openStation();
+    }
   }
   async function request(route, data) {
     const abort = new AbortController(), timeout = setTimeout(() => abort.abort(), 20000);
@@ -38,15 +42,15 @@
   }
   async function action(route, data = {}) {
     try { await request(route, data); }
-    catch (error) { $('status').textContent = error.message; $('status').dataset.phase = 'error'; }
+    catch (error) { openAfterTest = false; $('status').textContent = error.message; $('status').dataset.phase = 'error'; }
   }
   function openStation() {
     if (current.localAvailable) { window.location.href = 'starnet-connect://remote'; return; }
     window.location.href = 'http://127.0.0.1:' + (current.config?.port || 8790);
   }
   $('login').onclick = () => action('login'); $('profile').onclick = () => action('profile');
-  $('connection').onsubmit = event => { event.preventDefault(); invalidate(); action('test', input()); };
-  $('cancel').onclick = () => action('cancel');
+  $('connection').onsubmit = event => { event.preventDefault(); invalidate(); openAfterTest = !current?.config; action('test', input()); };
+  $('cancel').onclick = () => { openAfterTest = false; action('cancel'); };
   $('ssh').onclick = () => { if ($('connection').reportValidity()) action('ssh', input()); };
   $('install').onclick = () => { if ($('connection').reportValidity()) action('install', input()); };
   $('open').onclick = openStation; $('return').onclick = openStation;

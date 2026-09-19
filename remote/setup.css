@@ -32,6 +32,8 @@
 #screen-remote-setup summary { cursor: pointer; }
 #screen-remote-setup #install-panel { margin-top: 20px; }
 #screen-remote-setup .setup-footer { flex: 0 0 auto; flex-wrap: wrap; }
+#screen-remote-setup .setup-actions { display: flex; align-items: stretch; gap: var(--s-2); max-width: 100%; }
+#screen-remote-setup .setup-actions > .btn-xl { width: 220px; min-width: 0; flex: 1 1 220px; white-space: normal; }
 #screen-remote-setup .setup-receipt { flex: 1; min-width: 240px; }
 #screen-remote-setup #status { min-height: 2.4em; overflow-wrap: anywhere; user-select: text; }
 #screen-remote-setup #status[data-phase=error] { color: var(--bad); }
@@ -40,5 +42,5 @@
   #screen-remote-setup { padding: 12px; }
   #screen-remote-setup .setup-body { grid-template-columns: minmax(0, 1fr); }
   #screen-remote-setup .setup-receipt { flex-basis: 100%; }
-  #screen-remote-setup .setup-footer .btn-xl { flex: 1; }
+  #screen-remote-setup .setup-actions { width: 100%; }
 }

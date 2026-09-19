@@ -340,6 +340,7 @@ fn show_remote_window(app: &AppHandle, port: u16) -> Result<(), String> {
     } else {
         let closing = app.clone();
         let closing_label = label.clone();
+        let navigation = app.clone();
         let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
             .title("StarNet")
             .inner_size(1280.0, 832.0)
@@ -347,6 +348,12 @@ fn show_remote_window(app: &AppHandle, port: u16) -> Result<(), String> {
             .center()
             .initialization_script(remote_initialization(port))
             .on_navigation(move |url| {
+                // The remote document can open the isolated chooser, but cannot
+                // perform local setup/admin actions or invoke native commands.
+                if matches!(url.as_str(), "starnet-connect://setup" | "starnet-connect://setup/") {
+                    show_setup(navigation.clone());
+                    return false;
+                }
                 url.scheme() == "http"
                     && url.host_str() == Some("127.0.0.1")
                     && url.port() == Some(port)
@@ -386,7 +393,7 @@ fn show_remote_window(app: &AppHandle, port: u16) -> Result<(), String> {
 }
 
 fn remote_initialization(port: u16) -> String {
-    let mut script = "window.__TAURI__=undefined; window.__STARNET_NATIVE__=true;".to_string();
+    let mut script = "window.__TAURI__=undefined; window.__STARNET_NATIVE__=true; window.__STARNET_CONNECTION_SETUP__=true;".to_string();
     let legacy = std::env::var_os("HOME")
         .map(PathBuf::from)
         .and_then(|home| {
