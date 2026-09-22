@@ -839,3 +839,4 @@ test/onboarding-journal.test.js
 test/native-startup.test.js
 test/native-scene.test.js
 test/onboarding-audio.test.js
+test/loop.truncated-args-refuse.test.js
