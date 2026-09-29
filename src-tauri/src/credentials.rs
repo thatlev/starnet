@@ -64,6 +64,7 @@ pub(crate) fn normalize_provider(provider: &str) -> &'static str {
         "perplexity" | "pplx" | "sonar" => "perplexity",
         "cerebras" => "cerebras",
         "ollama" | "ollama-local" => "ollama",
+        "claude-cli" | "claude-code" | "claude-code-cli" => "claude-cli",
         "custom" | "openai-compatible" | "local" | "vllm" | "lmstudio" => "custom",
         _ => "openrouter",
     }
@@ -413,6 +414,7 @@ mod tests {
             ("moonshot", "kimi"),
             ("pplx", "perplexity"),
             ("ollama-local", "ollama"),
+            ("claude-code", "claude-cli"),
             ("lmstudio", "custom"),
             ("unknown-provider", "openrouter"),
         ];
