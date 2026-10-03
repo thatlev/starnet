@@ -7,6 +7,7 @@ Upstream history, MIT license and notices are retained. The public overview is [
 
 - [x] Move the private model gateway out of Providers / API Keys into its own Settings → Gateway section, keeping its select, add-key, update, backups and remove controls.
 - [x] Route the "no key" banner to Gateway when the gateway is the missing provider.
+- [x] Fix Gateway spacing from Lev's installed-app review: add a gateway icon instead of an empty logo slot, separate the saved key into a GATEWAY KEY group, space the explanation from the card, and lay key actions out in a row that wraps below the credential when narrow.
 - [x] Document the fork (FORK.md, docs/remote/GATEWAY.md, README notice, setup/operations/testing updates).
 - [ ] Rebuild and reinstall the Mac app and the server release; remove old builds.
 - [ ] Make the fork repository public after the history scan.

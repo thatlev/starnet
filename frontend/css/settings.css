@@ -13,6 +13,10 @@
 .settings-console .ms-h .dim { display: block; font-size: 14px; line-height: 1.5; letter-spacing: 0; margin-top: 4px; }
 .settings-console :is(.set-about,.mc-hint,.pc-plain,.perm-m-desc,.perm-m-floor,.ns-note) { font-size: 14px; line-height: 1.55; letter-spacing: 0; overflow-wrap: anywhere; }
 .settings-console .set-about { margin: 0 0 16px; }
+/* A group's own padding is its bottom inset; a trailing paragraph margin doubled it. */
+.settings-console .settings-group > .set-about:last-child { margin-bottom: 0; }
+/* An explanation directly under provider cards (the GATEWAY section) needs the same separation the cards share. */
+.settings-console .prov-list + .set-about { margin-top: 16px; }
 .settings-console .mc-hint { margin: 7px 0 18px; }
 .settings-console .set-sub { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 22px 0 10px; border: 0; }
 .settings-console .set-sub-k { font-size: 14px; color: var(--ph-bright); }
@@ -60,7 +64,11 @@
 .settings-console .key-meta { font-size: 13px; line-height: 1.5; }
 .settings-console .key-mask { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .settings-console .key-meta { overflow-wrap: anywhere; }
-.settings-console .key-acts { display: flex; flex-wrap: wrap; gap: 7px; }
+/* Actions sit in one row beside the credential and wrap only when the pane is too narrow; the base
+   column stack made every saved-key row several buttons tall even in a wide pane. */
+.settings-console .key-row { flex-wrap: wrap; }
+.settings-console .key-main { flex: 1 1 260px; }
+.settings-console .key-acts { display: flex; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; flex: 0 1 auto; margin-left: auto; gap: 7px; }
 /* Include the async account paragraph's margins in its reserved height. */
 .settings-console #credits-store { display: flow-root; }
 .settings-console .ns-grid { gap: 12px; }

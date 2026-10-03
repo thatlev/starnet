@@ -5999,11 +5999,13 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       '<div id="credits-store"></div>';
     // GATEWAY — the private model gateway gets its own section instead of sitting among model API keys. Same card,
     // same key row and the same shared handlers (wireProviderActions/wireKeyActions run across every pane).
+    // The card and its explanation form one group; a saved key gets its own GATEWAY KEY group, mirroring how
+    // PROVIDERS separates its cards from API KEYS (arrangeSettingsPane starts a new group at each h4).
     const gatewayKeys = keysHtml('gateway');
     const secGateway =
       '<div class="prov-list">' + providersHtml('gateway') + '</div>' +
-      (gatewayKeys ? '<div class="key-list">' + gatewayKeys + '</div>' : '') +
-      '<p class="set-about">StarNet sends model requests to your private gateway, which runs them on the model accounts connected to it. Select it here to use it, and update or remove its key here. The key stays masked; which models it allows is managed on the gateway itself.</p>';
+      '<p class="set-about">StarNet sends model requests to your private gateway, which runs them on the model accounts connected to it. Select it here to use it, and update or remove its key here. The key stays masked; which models it allows is managed on the gateway itself.</p>' +
+      (gatewayKeys ? '<h4 class="ms-h">GATEWAY KEY</h4><div class="key-list">' + gatewayKeys + '</div>' : '');
     const secAutonomy =
       // AUTONOMY — the "alive between sessions" dial: two independent axes (autonomy.js). Reuses the theme-picker
       // button idiom (.set-themes/.set-theme) so it needs no new CSS. The live describe() line keeps it honest.
