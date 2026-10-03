@@ -13,6 +13,13 @@
 .settings-console .ms-h .dim { display: block; font-size: 14px; line-height: 1.5; letter-spacing: 0; margin-top: 4px; }
 .settings-console :is(.set-about,.mc-hint,.pc-plain,.perm-m-desc,.perm-m-floor,.ns-note) { font-size: 14px; line-height: 1.55; letter-spacing: 0; overflow-wrap: anywhere; }
 .settings-console .set-about { margin: 0 0 16px; }
+.settings-console .config-pane { min-width: 0; container-type: inline-size; container-name: config-pane; }
+.settings-console .config-pane textarea.config-editor { display: block; min-height: 230px; height: 38vh; margin-top: 10px; resize: vertical; font-family: monospace; font-size: 13px; line-height: 1.5; }
+.settings-console .config-history-row { display: flex; gap: 12px; justify-content: space-between; align-items: center; padding: 14px 0; border-top: 1px solid rgba(var(--ph-rgb), .18); }
+.settings-console .config-history-row > div { min-width: 0; overflow-wrap: anywhere; }
+.settings-console .config-history-row p { margin: 4px 0 0; }
+.settings-console .config-history-row button { flex-shrink: 0; }
+@container config-pane (max-width: 420px) { .settings-console .config-history-row { align-items: flex-start; flex-direction: column; } }
 /* A group's own padding is its bottom inset; a trailing paragraph margin doubled it. */
 .settings-console .settings-group > .set-about:last-child { margin-bottom: 0; }
 /* An explanation directly under provider cards (the GATEWAY section) needs the same separation the cards share. */
@@ -157,3 +164,9 @@
   .settings-console .key-acts .bb { flex: 1 1 auto; white-space: normal; }
 }
 @media(prefers-reduced-motion:reduce) { .settings-console .prov-card[data-provider="starnet"]::before { animation:none; } }
+/* When the console stacks, keep navigation to one scrollable row. Full-width wrapped tabs
+   otherwise consume the entire window and leave the selected settings below the clipped body. */
+@media(max-width:760px) {
+  .settings-console .con-rail-list { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; }
+  .settings-console .con-rail-item { width: auto; flex: 0 0 auto; white-space: nowrap; }
+}

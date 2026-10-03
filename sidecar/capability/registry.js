@@ -257,6 +257,8 @@
       // ⛔ This registry is an ALLOWLIST — a tool registered but not declared here is exposed to NOBODY
       // (that is how these three shipped invisible on the first pass; a live model probe caught it).
       { capId: 'orchestrator', tool: 'session.list', scope: 'read', requiresConsent: false, network: false },
+      { capId: 'orchestrator', tool: 'station.config.read', scope: 'read', requiresConsent: false, network: false },
+      { capId: 'orchestrator', tool: 'station.config.apply', scope: 'write', requiresConsent: true, network: false },
       { capId: 'orchestrator', tool: 'session.create', scope: 'write', requiresConsent: false, network: false },
       // session.peek reads another session's recent turns — the anti-guessing verb: without it a lead asked
       // "what did the researcher do?" answered from assumption and denied real finished work (2026-07-30).

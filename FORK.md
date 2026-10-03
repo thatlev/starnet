@@ -77,6 +77,10 @@ x86_64 or arm64 machine with systemd, SSH access and sudo.
 Full details: [connection setup](docs/remote/SETUP.md) · [operations and recovery](docs/remote/OPERATIONS.md) ·
 [acceptance checks](docs/remote/TESTING.md) · [private model gateway](docs/remote/GATEWAY.md).
 
+For editable settings, rooms and layouts, use **Settings → Configuration** or the
+[agent configuration CLI/API](docs/remote/AGENT-CONFIGURATION.md). Every applied configuration edit
+records a private recovery snapshot and visible change history.
+
 ## Testing
 
 ```sh

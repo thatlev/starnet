@@ -35,7 +35,7 @@ if pgrep -x StarNetRemote >/dev/null 2>&1 || pgrep -x skynet-desktop >/dev/null 
 fi
 client_backup="$source_root/work/mac-build/client-backup-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$client_backup"
-for previous in "$HOME/.config/starnet-remote" "$HOME/Library/WebKit/com.thatlev.starnet.remote" "$HOME/Library/WebKit/ai.skynet.harness"; do
+for previous in "$HOME/.config/starnet-remote" "$HOME/Library/WebKit/com.thatlev.starnet.remote" "$HOME/Library/WebKit/ai.skynet.harness" "$HOME/Library/Application Support/ai.skynet.harness/lifecycle.json"; do
   [[ -e "$previous" ]] || continue
   ditto "$previous" "$client_backup/$(basename "$previous")"
 done

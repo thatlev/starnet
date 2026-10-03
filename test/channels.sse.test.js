@@ -213,6 +213,9 @@ A.eq(runTeeView('agent.reasoning', { agentId: 'a1', runId: 'r1', on: true }), nu
   const openEnd = world.indexOf('\n    };\n    connOpenFn = open;', openAt);
   A.ok(openEnd > openAt, 'the production channel-bridge open() closure is extractable for behavioral execution');
   const openSource = world.slice(openAt, openEnd + '\n    };'.length);
+  const repairAt = world.indexOf('const repairStalledStream = () => {', openEnd);
+  const repairEnd = world.indexOf('\n    };', repairAt);
+  const repairSource = world.slice(repairAt, repairEnd + '\n    };'.length);
   let timerId = 0;
   const timers = new Map();
   const fakeSetTimeout = fn => { const id = ++timerId; timers.set(id, fn); return id; };
@@ -227,17 +230,21 @@ A.eq(runTeeView('agent.reasoning', { agentId: 'a1', runId: 'r1', on: true }), nu
     let bridgePaused = false, chanES = null, retryTimer = null, backoff = 1000;
     let bridgeCursor = '', bridgeRecovering = false;
     const emitted = []; let snapshots = 0;
-    let lastSseEventAt = 0, fnow = 0;
+    let lastSseEventAt = 0, fnow = 0, chanCreatedAt = 0, testNow = 0;
+    const LINK_STALE_MS = 40000;
     const apiUrl = x => x, fetchSnapshot = () => { snapshots++; };
     const window = { __STARNET_API_TOKEN__: '' };
-    const performance = { now: () => 0 };
+    const performance = { now: () => testNow };
     const U = { bus: { emit(name, payload) { emitted.push({name, payload}); } } };
     ${openSource}
+    ${repairSource}
     return {
       open,
       emitted, snapshots: () => snapshots,
       resume() { if (!chanES) open(); },
       source() { return chanES; }
+      , advance(now) { testNow = now; repairStalledStream(); }
+      , pause() { bridgePaused = true; }
     };
   `);
   const bridge = makeBridge(FakeEventSource, fakeSetTimeout, fakeClearTimeout);
@@ -267,6 +274,17 @@ A.eq(runTeeView('agent.reasoning', { agentId: 'a1', runId: 'r1', on: true }), nu
   A.eq(bridge.snapshots(), 1, 'replay completion refreshes authoritative state');
   resumed.onerror(); bridge.resume();
   A.ok(bridge.source().url.includes('cursor=a%3A2'), 'a manually recreated EventSource carries the acknowledged cursor');
+  const silent = bridge.source();
+  bridge.advance(41000);
+  A.ok(silent.closed && bridge.source() !== silent, 'a CONNECTING stream with no error or data is replaced after the silence limit');
+  const repaired = bridge.source(); repaired.readyState = FakeEventSource.OPEN;
+  repaired.onmessage({ data: JSON.stringify({ stream: 'ready', cursor: 'a:2' }), lastEventId: 'a:2' });
+  bridge.advance(60000);
+  A.eq(bridge.source(), repaired, 'healthy stream activity prevents unnecessary replacement');
+  bridge.advance(82000);
+  A.ok(repaired.closed && bridge.source() !== repaired, 'a half-open stream also reconnects instead of staying LINK DOWN');
+  const beforePause = bridge.source(); bridge.pause(); bridge.advance(140000);
+  A.eq(bridge.source(), beforePause, 'the watchdog never reopens a deliberately paused bridge');
 
   const spawnAt = world.indexOf('chanQueues.clear(); serverLit.clear();');
   A.ok(spawnAt > 0, 'spawn() owns the new-agent reset block');

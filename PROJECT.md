@@ -22,13 +22,22 @@ In this release's five native launches the station reached FEED: LIVE each time;
 
 Verified in the installed app: Appearance shows MENU BAR ICON with Monochrome selected by default; choosing Color and then Monochrome wrote `menuBarIconMonochrome` false/true to `~/Library/Application Support/ai.skynet.harness/lifecycle.json`, and the chips followed the state the native app reported back. The setup panel now samples warm (≈ rgb 13,8,6) instead of neutral blue-black. The menu bar icon itself was not visually captured (screen capture here excludes other apps' menu bar extras); 53 native tests cover the whitelist, icon decoding and preference defaults.
 
-## Open bug: native remote window can stay on FEED: RECONNECTING
+## Recovery follow-up: native remote window can stay on FEED: RECONNECTING
 
 The installed Mac app's remote window sometimes stays on LINK DOWN / FEED: RECONNECTING for minutes, including in front and after relaunches; another launch may go live within seconds. On the same proxy and server, Safari and Chromium go live immediately, and Chromium also stays live with the native init flags (`__STARNET_NATIVE__`, `__STARNET_CONNECTION_SETUP__`, `__STARNET_MENU_BAR__`) injected. The event stream returns 200 with a ready frame, the snapshot returns 200, the helper reports connected, and the server has no SSE client limit. Remaining suspects are state specific to the app's own WebKit store (`~/Library/WebKit/ai.skynet.harness`) or WKWebView behaviour in the Tauri window. Next step: a diagnostic build with an inspectable web view to read the bridge state directly. It predates this release (seen on `90af4a36d`). An earlier note here attributing it to background-window throttling was wrong and is withdrawn.
 
-## Next release (queued): agent-editable station configuration
+The configuration release fixes a demonstrated recovery gap: the HUD detected a silent/half-open stream after 40 seconds but only reopened it if EventSource emitted an error. A 5-second watchdog now replaces a stream with no activity for over 40 seconds, preserving the replay cursor and single-stream guards. Snapshot reads time out after 10 seconds. Injected CONNECTING/OPEN stalls, healthy streams, stale callbacks and deliberate pause are covered by the 84 SSE assertions. This prevents the demonstrated indefinite-wait path; the original intermittent native failure's underlying WebKit cause is not claimed proven.
 
-Lev wants nearly everything — settings, rooms, maps and layouts — editable by agents through configuration or an equally simple surface, with every change visible and backed up. Upstream has moved 867 commits past this fork's v0.12.3 base and now ships a `station.layout` agent tool for floor edits, so the first step is merging current upstream rather than building a parallel layout editor. Placed objects are capability grants, so agent layout/permission edits must keep consent and remain auditable. Plan: merge upstream; expose a validated settings get/set tool with a change history visible in Settings; snapshot the station (the existing STATION BACKUP export, secrets excluded) before each agent-applied change with one-step restore; document the configuration surface for agents.
+## Active release: agent-editable station configuration
+
+Lev asked to finish the queued configuration work on 2026-10-03. Correction: upstream's `station.layout` is explicitly read-only, not a floor editor. Pulling in 867 unrelated commits is unnecessary for this feature; reuse this fork's existing `WorldModel.replaceLayout` validation and history.
+
+- [x] Add a versioned configuration surface for viewer settings and complete station layouts, usable by agents and from Settings.
+- [x] Reject stale/invalid edits, target one viewer, preserve capability consent, and durably snapshot each change with visible history and restore.
+- [x] Document the CLI/API and existing configuration surfaces for runtime settings, crew, providers and native Mac preferences.
+- [ ] Verify failure/recovery and responsive UI, rebuild/install, retain data backups, remove superseded app builds, and push the reviewed release.
+
+Pre-install checks: all 37 remote tests, the 21-entry remote regression list, 55 native tests and 84 SSE assertions pass. The dedicated configuration tests cover backup failures, stale edits, restoration, consent and single-viewer claims. A disposable browser station verifies API and Settings Apply/Restore, save/reload persistence, CLI export permissions, and usable layouts at 1360, 720 and 390px. Narrow Settings navigation now stays in one horizontally scrollable row instead of wrapping over the content. No real model calls or production configuration edits were used for these checks.
 
 ## Active release: Gateway settings section and public fork
 

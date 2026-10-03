@@ -3747,6 +3747,9 @@ const chanBus = { emit: (name, payload) => {
 const stationBridge = REMOTE_MODE
   ? remoteRuntime.makeHeadlessStation({ saveStore, roster: () => agentRoster, runs: () => runStore.all(), activeRuns: () => runsMeta, degraded: () => workspaceDegraded })
   : makeStationBridge({ emit: (name, payload) => { try { sse.broadcast(name, payload); } catch (_) {} } });
+const stationConfig = require('./station-config').makeStationConfig({ root: WORKSPACES,
+  emit: (name, payload) => sse.broadcast(name, payload),
+  canEdit: actorRunId => !workspaceDegraded && [...runsMeta.keys()].every(id => id === actorRunId) });
 const remoteRequests = REMOTE_MODE ? remoteRuntime.makeRequestClaims(WORKSPACES) : null;
 const remotePrompts = new Map();
 const remoteGoals = REMOTE_MODE ? require('./remote-goals').makeRemoteGoals({ root: WORKSPACES, run: remoteGoalTurn }) : null;
@@ -9093,6 +9096,9 @@ const ROUTES = [
   { m: 'POST', exact: '/api/session', h: handleApiSession },
   // qsplit, not exact: these carry ?provider= so the page can ask about the provider it is actually on.
   { m: 'POST', exact: '/api/station/ack', h: handleStationAck },
+  { m: 'POST', exact: '/api/station-config/request', h: handleStationConfig },
+  { m: 'POST', exact: '/api/station-config/claim', h: handleStationConfig },
+  { m: 'POST', exact: '/api/station-config/ack', h: handleStationConfig },
   { m: 'GET', qsplit: '/api/realtime/status', h: handleRealtimeStatus },
   { m: 'POST', qsplit: '/api/realtime/session', h: handleRealtimeSession },
   { m: 'GET', exact: '/api/stt/status', h: media.handleSttStatus },
@@ -10292,6 +10298,18 @@ async function handleStationAck(req, res) {
   if (!id) return json(400, { error: 'missing id' });
   const matched = stationBridge.ack(id, body);
   return json(matched ? 200 : 409, { matched, inFlight: stationBridge.inFlight() });
+}
+
+async function handleStationConfig(req, res) {
+  try {
+    const body = JSON.parse(await readBody(req, 5 << 20, res));
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Expected an object');
+    if (req.url.endsWith('/claim')) return respondJson(res, 200, { claimed: stationConfig.claim(body.id, body.viewerId, body.clientId) });
+    if (req.url.endsWith('/ack')) return respondJson(res, 200, { matched: stationConfig.ack(body.id, body.viewerId, body) });
+    return respondJson(res, 200, await stationConfig.execute(body));
+  } catch (error) {
+    if (!res.headersSent) respondJson(res, 409, { ok: false, error: redact(String(error.message || 'Configuration failed')) });
+  }
 }
 
 function handleRealtimeStatus(req, res) {
@@ -15660,6 +15678,7 @@ async function runOnce(o) {
   // uses. Same 'orchestrator' capability gate as team.* — conferred on the lead run only, so a delegated
   // worker can never open or steal the Commander's sessions. Headless runs refuse honestly (bridge times out).
   makeStationTools({ station: stationBridge }).register(registry);
+  require('./tools/builtin/station-config').registerStationConfigTools(registry, stationConfig);
   // routine.create/list: the lead can schedule real StarNet ROUTINES through the same cron store the panel uses.
   makeRoutineTools({
     roster: () => agentRoster,

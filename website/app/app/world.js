@@ -8279,6 +8279,7 @@ const World = (() => {
   function apiUrl(path) { return apiBase() + path; }
   let chanES = null, connPollTimer = null, connPollFn = null, connOpenFn = null, bridgePaused = false;
   let bridgeCursor = '', bridgeRecovering = false;
+  let chanCreatedAt = 0;
   let spotifyPollTimer = null, spotifyPollFn = null;   // JUKEBOX dead-vs-live poll (shares the bridge pause/resume lifecycle)
   // LINK-DOWN HONESTY (Lane E1): the live station telemetry (queue gauges, run clocks) is only truthful while
   // the SSE bridge is actually delivering events. Track the last DATA event's wall-clock and the socket's
@@ -9597,6 +9598,7 @@ const World = (() => {
         // prefix the sidecar base in the desktop build (where the page origin isn't the loopback http origin).
         const _tok = (typeof window !== 'undefined' && window.__STARNET_API_TOKEN__) ? encodeURIComponent(String(window.__STARNET_API_TOKEN__)) : '';
         chanES = new EventSource(apiUrl('/api/channels/events') + '?cursor=' + encodeURIComponent(bridgeCursor) + (_tok ? ('&token=' + _tok) : ''));
+        chanCreatedAt = (typeof performance !== 'undefined') ? performance.now() : fnow;
       } catch (_) { return; }
       const source = chanES;
       bridgeRecovering = true;
@@ -9627,6 +9629,20 @@ const World = (() => {
     };
     connOpenFn = open;
     open();
+    // A WebKit EventSource can remain CONNECTING/OPEN without another error callback. The HUD
+    // already labels a silent stream down after 40s; actively replace that same stale stream
+    // instead of leaving the station on RECONNECTING indefinitely. Only observations replay.
+    const repairStalledStream = () => {
+      if (bridgePaused || !chanES) return;
+      const now = (typeof performance !== 'undefined') ? performance.now() : fnow;
+      if (now - Math.max(chanCreatedAt, lastSseEventAt) <= LINK_STALE_MS) return;
+      const stale = chanES;
+      chanES = null;
+      try { stale.close(); } catch (_) {}
+      bridgeRecovering = true;
+      open();
+    };
+    setInterval(repairStalledStream, 5000);
     // E2+ (2026-07-16): the snapshot reconcile used to fire ONLY on SSE (re)open, so a lost run.end inside a
     // HEALTHY link waited out the full 5m TTL before the floor/panel stopped asserting WORKING. Poll the same
     // authoritative snapshot on a slow cadence: truth converges within ~30s in BOTH directions (a dead run is
@@ -9642,7 +9658,7 @@ const World = (() => {
     if (typeof fetch === 'undefined') return;
     const source = chanES;
     try {
-      fetch(apiUrl('/api/state/snapshot'), { cache: 'no-store' })
+      fetch(apiUrl('/api/state/snapshot'), { cache: 'no-store', signal: AbortSignal.timeout(10000) })
         .then(r => { if (!r.ok) return null; return r.json(); })
         .then(snap => { if (snap && source === chanES && !bridgePaused) { try { reconcileFromSnapshot(snap); bridgeRecovering = false; } catch (_) {} } })
         .catch(() => {});   // endpoint absent / offline: TTL net covers it

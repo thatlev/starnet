@@ -19,3 +19,4 @@ test/cloudsavecore.test.js
 test/harness-internal.test.js
 test/harness-placement.test.js
 test/harness.cancel-truth.test.js
+test/station-config.test.js

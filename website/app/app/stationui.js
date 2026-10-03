@@ -87,6 +87,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   const open = {};           // key -> open terminal-window element (stays populated while minimized)
   const minimized = {};      // key -> true while the window is minimized to the strip (element kept alive, hidden)
   let started = false;
+  let configControlsDirty = false;
 
   /* ---------- persistence (user-owned UI state) ---------- */
   // themeHue/themeSat drive the CUSTOM phosphor derivation (theme:'custom'); themeGlow (0–150%) is an
@@ -1375,6 +1376,11 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       consoleSection[key] = id;
       if (viaClick) saveWindowState();   // remember the section the Commander navigated to, across reloads
       activeId = id;
+      if (key === 'settings' && id !== 'configuration' && configControlsDirty) {
+        configControlsDirty = false;
+        rerender('settings');
+        return;
+      }
       showGroup(id);
       Object.keys(panes).forEach(k => {
         const on = k === id;
@@ -6521,6 +6527,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       // preferences — same word, two doors), and a 'SYSTEM' section inside SETTINGS inside the SYSTEM
       // dock read as a loop.
       { id: 'notifs', label: 'ALERTS', glyph: '◔', desc: 'What pings you while you work, and whether it chimes.', build: frag(secNotifs) },
+      { id: 'configuration', label: 'CONFIGURATION', glyph: '≡', desc: 'Edit appearance, notifications and the station floor as JSON.', build: () => {}, onShow: el => StationConfig.mount(el) },
       { id: 'system', label: 'APP & BACKUP', glyph: '⚙', desc: 'Startup, runtime limits, backups, updates, and troubleshooting.', build: frag(secSystem) }
     ];
     const host = mountConsole(body, 'settings', sections, { search: true, searchPlaceholder: 'search settings…' });
@@ -10026,10 +10033,32 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   }
   function getTheme() { return store.settings.theme; }
 
+  function configSettings() {
+    const values = Object.assign({}, store.settings, { crtGlass: resolveGlass(store.settings.crtGlass),
+      sessionRow: resolveSessionRow(store.settings.sessionRow), roomLighting: resolveRoomLighting(store.settings.roomLighting) });
+    return Object.fromEntries(StationConfigCore.settingNames.map(key => [key, StationConfigCore.clone(values[key])]));
+  }
+  function applyConfigSettings(settings) {
+    const previous = store.settings;
+    store.settings = Object.assign({}, previous, settings);
+    if (!save()) { store.settings = previous; throw new Error('Could not save viewer settings'); }
+    applySettings();
+  }
+  function refreshConfigControls() {
+    if (!open.settings) return;
+    // Preserve the configuration editor's in-flight status. Other instant-setting chips need
+    // a fresh paint; never replace an unrelated form while the Commander is typing into it.
+    configControlsDirty = true;
+    if (consoleSection.settings === 'configuration') return;
+    if (document.activeElement && document.activeElement.matches('input,textarea,[contenteditable="true"]')) return;
+    configControlsDirty = false;
+    rerender('settings');
+  }
+
   // GROWTH Tier 3: repaint the Settings AUTONOMY panel's EARNED badge if it is open (no-op otherwise — the paint fn
   // queries its own (possibly detached) host nodes, so a closed panel costs nothing). Called after a trust accept.
   const repaintAutonomy = () => { try { if (repaintAutonomyDial) repaintAutonomyDial(); } catch (_) {} };
-  return { init, enter, setRoster, leave, clearRunning, runningCount: () => runningAgents.size, isAgentRunning: (id) => agentLive(id), notify, flashSave, openAgent, openArcade, toggleTerm, openTerm, closeTerm, rerender, refreshBoard: refreshBoardLive, pokeQuests, setTheme, getTheme, repaintAutonomy, registerWindow, h };
+  return { init, enter, setRoster, leave, clearRunning, runningCount: () => runningAgents.size, isAgentRunning: (id) => agentLive(id), notify, flashSave, openAgent, openArcade, toggleTerm, openTerm, closeTerm, rerender, refreshBoard: refreshBoardLive, pokeQuests, setTheme, getTheme, repaintAutonomy, registerWindow, configSettings, applyConfigSettings, refreshConfigControls, h };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { visibleTerminalRect, clampTerminalSize };

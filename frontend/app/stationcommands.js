@@ -416,6 +416,7 @@ const StationCommands = (() => {
     if (typeof U === 'undefined' || !U.bus || !U.bus.on) return;
     U.bus.on('station.command', msg => {
       if (!msg || !msg.id || !msg.verb) return;
+      if (String(msg.verb).startsWith('config.')) return; // separately claimed, backed-up configuration transaction
       run(String(msg.id), String(msg.verb), msg.args);
     });
   }
