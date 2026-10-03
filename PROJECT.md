@@ -39,6 +39,8 @@ Lev asked to finish the queued configuration work on 2026-10-03. Correction: ups
 
 Pre-install checks: all 37 remote tests, the 21-entry remote regression list, 55 native tests and 84 SSE assertions pass. The dedicated configuration tests cover backup failures, stale edits, restoration, consent and single-viewer claims. A disposable browser station verifies API and Settings Apply/Restore, save/reload persistence, CLI export permissions, and usable layouts at 1360, 720 and 390px. Narrow Settings navigation now stays in one horizontally scrollable row instead of wrapping over the content. No real model calls or production configuration edits were used for these checks.
 
+Installed checks caught a discovery edge case: Settings could read its explicitly targeted configuration, but an untargeted CLI read skipped the native page while macOS marked its window hidden. Native viewers now answer background reads as well; the browser regression runs the real CLI with the native flag and hidden document to guard this case. Hidden browser tabs still defer to a visible viewer.
+
 ## Active release: Gateway settings section and public fork
 
 - [x] Move the private model gateway out of Providers / API Keys into its own Settings → Gateway section, keeping its select, add-key, update, backups and remove controls.

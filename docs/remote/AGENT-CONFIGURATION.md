@@ -9,6 +9,7 @@ Build model and placement rules.
 
 Keep the connected Mac app open. No credential needs to be copied into chat or command arguments:
 the CLI obtains the runtime token in memory through the authenticated Mac loopback proxy.
+The Mac window may be in the background; unlike hidden browser tabs, it still answers agent reads.
 
 ```sh
 node scripts/station-config.mjs get --out /tmp/starnet-config.json

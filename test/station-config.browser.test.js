@@ -52,7 +52,14 @@ test('real viewer applies settings and a room edit, rejects invalid/stale edits 
   assert.equal(read.httpStatus, 200, read.error);
   const tokenFile = path.join(root, 'test-token'), exportFile = path.join(root, 'config-export.json');
   fs.writeFileSync(tokenFile, token, { mode: 0o600 });
+  // External agents normally run with Codex/Terminal in front of the Mac app. Native discovery
+  // must still answer while WebKit marks its window hidden; targeting stays pinned to one page.
+  await page.evaluate(() => {
+    window.__STARNET_NATIVE__ = true;
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+  });
   await promisify(execFile)(process.execPath, ['scripts/station-config.mjs', 'get', '--url', base, '--token-file', tokenFile, '--out', exportFile], { cwd: ROOT });
+  await page.evaluate(() => { delete document.hidden; delete window.__STARNET_NATIVE__; });
   const exported = JSON.parse(fs.readFileSync(exportFile));
   assert.equal(exported.viewerId, read.viewerId);
   assert.equal(JSON.stringify(exported).includes(token), false);

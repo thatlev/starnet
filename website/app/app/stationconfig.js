@@ -79,7 +79,10 @@ const StationConfig = (() => {
   async function command(msg) {
     if (!msg || !String(msg.verb).startsWith('config.') || !msg.id ||
         (msg.args?.viewerId && msg.args.viewerId !== viewerId) ||
-        (msg.args?.clientId && msg.args.clientId !== clientId) || (!msg.args?.viewerId && document.hidden)) return;
+        (msg.args?.clientId && msg.args.clientId !== clientId) ||
+        (!msg.args?.viewerId && document.hidden && !window.__STARNET_NATIVE__)) return;
+    // Native windows remain valid agent targets while another app is in front or the display is
+    // asleep. Only hidden browser tabs defer discovery; explicit viewer/client targets always win.
     // Do not claim on a title/onboarding page without a live station. Another open viewer may answer.
     try { capture(); } catch (_) { return; }
     let claim;
