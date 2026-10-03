@@ -37,3 +37,9 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+
+# Build-time code (proc macros, build scripts) is loaded by rustc, never shipped. Stripping it lets the
+# platform strip tool rewrite the dylib's .rustc metadata (seen with Xcode 27's strip), after which rustc
+# rejects the crate ("can't find crate"). The shipped app binary is still stripped by the profile above.
+[profile.release.build-override]
+strip = false
