@@ -35,11 +35,18 @@ Lev asked to finish the queued configuration work on 2026-10-03. Correction: ups
 - [x] Add a versioned configuration surface for viewer settings and complete station layouts, usable by agents and from Settings.
 - [x] Reject stale/invalid edits, target one viewer, preserve capability consent, and durably snapshot each change with visible history and restore.
 - [x] Document the CLI/API and existing configuration surfaces for runtime settings, crew, providers and native Mac preferences.
-- [ ] Verify failure/recovery and responsive UI, rebuild/install, retain data backups, remove superseded app builds, and push the reviewed release.
+- [x] Verify failure/recovery and responsive UI, rebuild/install, retain data backups and remove superseded app builds.
+- [x] Prepare the reviewed public-fork release and its verification record for publication.
 
 Pre-install checks: all 37 remote tests, the 21-entry remote regression list, 55 native tests and 84 SSE assertions pass. The dedicated configuration tests cover backup failures, stale edits, restoration, consent and single-viewer claims. A disposable browser station verifies API and Settings Apply/Restore, save/reload persistence, CLI export permissions, and usable layouts at 1360, 720 and 390px. Narrow Settings navigation now stays in one horizontally scrollable row instead of wrapping over the content. No real model calls or production configuration edits were used for these checks.
 
 Installed checks caught a discovery edge case: Settings could read its explicitly targeted configuration, but an untargeted CLI read skipped the native page while macOS marked its window hidden. Native viewers now answer background reads as well; the browser regression runs the real CLI with the native flag and hidden document to guard this case. Hidden browser tabs still defer to a visible viewer.
+
+Installed Mac and server source: `7cb93968f087b591addfee4dbdccb0fbb10832a0`. Deep/strict Mac signature verification and matching source stamps pass. A cold launch retained one named StarNet window (`6252`) from the startup page to the station; the final native observation showed `FEED: LIVE`. The installed CLI read and no-change preview succeeded (15 settings, one existing room, four props; private 0600 export; no configuration mutation). Settings → Configuration also loaded in the installed candidate. The monochrome preference remains true in the Mac-local lifecycle file.
+
+Both server upgrades passed package checksums, runtime health and unauthenticated gateway refusal. Each private backup comparison retained all 62 durable files byte-for-byte, excluding only the regenerated workspace-owner claim. Final server backup: `/srv/private/starnet-upgrade-backups/7cb93968f087b591addfee4dbdccb0fbb10832a0/`. Mac client state, WebKit data and lifecycle preferences are retained in `work/mac-build/client-backup-20261003-215205/` (and earlier backups). The superseded `5512ab761` and intermediate `d4290bce6` app bundles were moved to the Mac Trash, where they remain recoverable; their source also remains in Git for rebuilding. Temporary server extraction directories were removed. No real inference or agent work was started, and no provider credentials or live station configuration were edited.
+
+Scope audit: Gateway separation/spacing, LINK STATION padding, the setup/chat panel colour, Mac-local monochrome control, public-fork documentation, single-window startup, configurable settings/layouts with restoration, rebuild/reopen and old-bundle cleanup are implemented. The intermittent native reconnecting indicator's deeper cause remains the separately tracked recovery follow-up above; this release proves bounded silent-stream recovery, not the cause of every native pause. Public signing/notarization and an official upstream PR remain outside this fork release.
 
 ## Active release: Gateway settings section and public fork
 
