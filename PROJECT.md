@@ -9,8 +9,14 @@ Upstream history, MIT license and notices are retained. The public overview is [
 - [x] Route the "no key" banner to Gateway when the gateway is the missing provider.
 - [x] Fix Gateway spacing from Lev's installed-app review: add a gateway icon instead of an empty logo slot, separate the saved key into a GATEWAY KEY group, space the explanation from the card, and lay key actions out in a row that wraps below the credential when narrow.
 - [x] Document the fork (FORK.md, docs/remote/GATEWAY.md, README notice, setup/operations/testing updates).
-- [ ] Rebuild and reinstall the Mac app and the server release; remove old builds.
-- [ ] Make the fork repository public after the history scan.
+- [x] Rebuild and reinstall the Mac app and the server release; remove old builds.
+- [x] Make the fork repository public after the history scan.
+
+Installed: Mac and server source `2ed7b955e3389258a615ac509a96af7df8ab4373`. The Mac app passed deep/strict signature verification and its source stamp matches. The server passed the installer's runtime-health and unauthenticated-refusal gates; station data matched the pre-upgrade backup except the regenerated owner claim, and the served station UI contains the new section. The installed app showed Settings → Gateway with the verified key and Providers/API Keys without the gateway. Data backups: `/srv/private/starnet-upgrade-backups/90af4a36d1cce85fd53776b20dd9cab026140bea/` and `…/2ed7b955e3389258a615ac509a96af7df8ab4373/`; Mac client backups remain under `work/mac-build/client-backup-*`.
+
+Old builds removed at Lev's request: all superseded server releases under `/opt/starnet/releases` (only `2ed7b955e` remains; any revision can be rebuilt from Git), and on the Mac the replaced app bundles, retired StarNet Remote bundles, temporary build folders and the debug bundle were moved to the Trash. Data backups were kept.
+
+Observed: when the Mac app opens behind other windows, macOS throttles the occluded WebKit view and the station can show LINK DOWN until the window is brought forward; it then goes live within seconds. Safari and Chromium viewers of the same proxy were live, and the event stream, snapshot and session were healthy throughout.
 
 The gateway section reuses the existing card and key-row markup and handlers; key rows keep their indexes in the full credential list, so actions resolve the same stored entry from either section. A local fixture with a dummy gateway key confirmed the section order, its absence from Providers/API Keys, Update and Backups editors, the two-step Remove, and selection, with the section remaining selected after each repaint.
 
