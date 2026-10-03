@@ -7,9 +7,11 @@ Upstream history, MIT license and notices are retained. The public overview is [
 
 - [x] Give LINK STATION, ADD KEY and SIGN IN a shared action width and consistent edges at wide and narrow pane sizes, without changing their behavior.
 - [x] Verify enlarged text, focus clearance, status alignment and the inline key editor.
-- [ ] Publish the CSS-only runtime update and retain rollback/data backups.
+- [x] Publish the CSS-only runtime update and retain rollback/data backups.
 
 The old narrow layout indented most actions by 42px to clear a provider logo, but made an exception for STARNET MANAGED. Actions now fill a shared 190px column in wide cards and the card's inner width in narrow cards; narrow status labels share their left edge. The existing labels, button padding, focus outlines and card shapes remain intact, with no additional wrappers or controls. A disposable Chromium regression reproduced the old misalignment and now passes at six pane widths (279–640px, including both sides of the 480px breakpoint) and 100%, 150% and 200% interface zoom. Keyboard focus and the inline key editor's open/close actions pass. The related provider/OAuth guards (136 assertions) and three delayed-settings-refresh tests also pass. The website mirror is synchronized.
+
+Installed runtime: `89939e82ce6e6a4405276eb7a9acf044be2ebf17`. The station was idle before installation; package checksums, runtime health and unauthenticated gateway refusal pass. All 62 durable files match the pre-upgrade backup, excluding only the regenerated workspace-owner claim. The previous immutable release and private backup at `/srv/private/starnet-upgrade-backups/89939e82ce6e6a4405276eb7a9acf044be2ebf17/` remain available. The served stylesheet matches the reviewed source, and the temporary extraction directory was removed. StarNet was quit normally and reopened; its native shell stays at `7cb93968f` because no client code changed. Providers loaded in the native accessibility tree, but macOS returned a stale screenshot and then `noWindowsAvailable`, so a fresh native visual check is not claimed. The existing intermittent FEED: RECONNECTING follow-up remains separate from this CSS-only release; no credentials, provider selection or model work were changed.
 
 ## Active release: one window for remote launches
 
