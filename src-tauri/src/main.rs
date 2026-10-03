@@ -4301,7 +4301,11 @@ fn main() {
                 );
             }
 
-            build_main_window(app.handle(), &location_choice)?;
+            // A saved remote station opens its one window directly (startup page, then the station); every
+            // other launch, and a remote launch whose saved connection cannot be read, uses the main window.
+            if !(location_choice == "remote" && remote_desktop::open_startup_window(app.handle())) {
+                build_main_window(app.handle(), &location_choice)?;
+            }
 
             remote_desktop::boot(app.handle(), &location_choice)?;
             Ok(())

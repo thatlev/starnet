@@ -9,12 +9,17 @@ use tauri_plugin_dialog::DialogExt;
 const SETUP_PORT: u16 = 18790;
 const SETUP_LABEL: &str = "station-connection";
 const REMOTE_LABEL: &str = "station-remote";
+/// The bundled, script-free "Opening your station" page a remote window shows until its station is ready.
+const STARTUP_PAGE: &str = "station-host.html";
 
 pub struct DesktopState {
     helper: Mutex<Option<Child>>,
     selected: Mutex<String>,
     preference: PathBuf,
     remote_label: Mutex<Option<String>>,
+    /// A remote window still on the startup page. It becomes the station window when the connection is
+    /// ready, so a remote launch shows one window from start to finish.
+    startup_label: Mutex<Option<String>>,
     pub local_started: AtomicBool,
     busy: AtomicBool,
     exit_pending: AtomicBool,
@@ -74,6 +79,7 @@ pub fn install(app: &AppHandle, choice: &str) {
         selected: Mutex::new(choice.into()),
         preference: preference(app),
         remote_label: Mutex::new(None),
+        startup_label: Mutex::new(None),
         local_started: AtomicBool::new(choice == "local"),
         busy: AtomicBool::new(false),
         exit_pending: AtomicBool::new(false),
@@ -266,9 +272,28 @@ fn retire_startup_window(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Leaving remote startup for Connection Setup: retire a remote window that never opened its station,
+/// exactly as the local startup placeholder is retired. A live station window is never touched.
+fn retire_remote_startup(app: &AppHandle) {
+    let state = app.state::<DesktopState>();
+    let Some(label) = state.startup_label.lock().ok().and_then(|mut slot| slot.take()) else {
+        return;
+    };
+    if let Ok(mut remote) = state.remote_label.lock() {
+        if remote.as_deref() == Some(label.as_str()) {
+            *remote = None;
+        }
+    }
+    if let Some(window) = app.get_webview_window(&label) {
+        // Destroy skips CloseRequested, which would quit a remote-only app.
+        let _ = window.destroy();
+    }
+}
+
 fn show_setup_window(app: &AppHandle) -> Result<(), String> {
     if focus(app, SETUP_LABEL) {
         retire_startup_window(app)?;
+        retire_remote_startup(app);
         return Ok(());
     }
     let handle = app.clone();
@@ -322,6 +347,7 @@ fn show_setup_window(app: &AppHandle) -> Result<(), String> {
         }
     });
     retire_startup_window(app)?;
+    retire_remote_startup(app);
     let _ = window.set_focus();
     Ok(())
 }
@@ -355,52 +381,145 @@ fn station_port() -> Result<u16, String> {
     Ok(port)
 }
 
+fn is_startup_page(url: &tauri::Url) -> bool {
+    url.scheme() == "tauri"
+        && url.host_str() == Some("localhost")
+        && url.path() == format!("/{STARTUP_PAGE}")
+}
+
+/// The saved station's local viewer port, read as the connection helper reads it (`port`, default 8790).
+fn station_port_from_config(bytes: &[u8]) -> Option<u16> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let port = match value.get("port") {
+        None => 8790,
+        Some(serde_json::Value::Number(number)) => number.as_u64()?,
+        Some(serde_json::Value::String(text)) => text.trim().parse::<u64>().ok()?,
+        Some(_) => return None,
+    };
+    u16::try_from(port)
+        .ok()
+        .filter(|port| *port >= 1024 && *port != SETUP_PORT)
+}
+
+fn saved_station_port() -> Option<u16> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    station_port_from_config(&std::fs::read(home.join(".config/starnet-remote/config.json")).ok()?)
+}
+
+/// One remote window per station port. A startup window opens on the bundled startup page and is
+/// revealed once that page has painted; it may show that page only until it first opens its station.
+fn build_remote_window(
+    app: &AppHandle,
+    port: u16,
+    startup: bool,
+) -> Result<tauri::WebviewWindow, String> {
+    let station: tauri::Url = format!("http://127.0.0.1:{port}/").parse().unwrap();
+    let label = format!("{REMOTE_LABEL}-{port}");
+    let closing = app.clone();
+    let closing_label = label.clone();
+    let navigation = app.clone();
+    let opened = std::sync::Arc::new(AtomicBool::new(!startup));
+    let revealed = AtomicBool::new(!startup);
+    let initial = if startup {
+        WebviewUrl::App(STARTUP_PAGE.into())
+    } else {
+        WebviewUrl::External(station)
+    };
+    let window = WebviewWindowBuilder::new(app, &label, initial)
+        .title("StarNet")
+        .inner_size(1280.0, 832.0)
+        .min_inner_size(960.0, 600.0)
+        .center()
+        .visible(!startup)
+        .initialization_script(format!("{}{}", remote_initialization(port), crate::menu_bar_init_script(app)))
+        .on_navigation(move |url| {
+            // The remote document can open the isolated chooser, but cannot
+            // perform local setup/admin actions or invoke native commands.
+            if matches!(url.as_str(), "starnet-connect://setup" | "starnet-connect://setup/") {
+                show_setup(navigation.clone());
+                return false;
+            }
+            // A Mac-side appearance choice only: saved natively, no other native authority.
+            if crate::handle_menu_bar_navigation(&navigation, url) {
+                return false;
+            }
+            if url.scheme() == "http" && url.host_str() == Some("127.0.0.1") && url.port() == Some(port) {
+                opened.store(true, Ordering::SeqCst);
+                return true;
+            }
+            // The startup page is allowed only before this window first opens its station, so a station
+            // document can never navigate back to a bundled page.
+            !opened.load(Ordering::SeqCst) && is_startup_page(url)
+        })
+        .on_page_load(move |window, payload| {
+            // Reveal after the first paint, so the window never opens blank.
+            if payload.event() == tauri::webview::PageLoadEvent::Finished
+                && !revealed.swap(true, Ordering::SeqCst)
+            {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        })
+        .build()
+        .map_err(|e| e.to_string())?;
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            if let Some(remote) = closing.get_webview_window(&closing_label) {
+                let _ = remote.hide();
+            }
+            close_station(&closing);
+        }
+    });
+    Ok(window)
+}
+
+/// Remote launches open their single station window immediately, on the startup page. When the
+/// connection is ready the same window opens the station. Returns false to keep the original startup
+/// path when the saved connection cannot be read.
+pub fn open_startup_window(app: &AppHandle) -> bool {
+    let Some(port) = saved_station_port() else {
+        return false;
+    };
+    let Ok(window) = build_remote_window(app, port, true) else {
+        return false;
+    };
+    let label = window.label().to_string();
+    let state = app.state::<DesktopState>();
+    if let Ok(mut remote) = state.remote_label.lock() {
+        *remote = Some(label.clone());
+    }
+    if let Ok(mut startup) = state.startup_label.lock() {
+        *startup = Some(label);
+    }
+    true
+}
+
 fn show_remote_window(app: &AppHandle, port: u16) -> Result<(), String> {
     let url: tauri::Url = format!("http://127.0.0.1:{port}/").parse().unwrap();
     let label = format!("{REMOTE_LABEL}-{port}");
     if let Some(window) = app.get_webview_window(&label) {
+        // A startup window has the bundled origin, so this opens its station in the same window.
         if window.url().map_err(|e| e.to_string())?.origin() != url.origin() {
             window.navigate(url).map_err(|e| e.to_string())?;
         }
         let _ = window.show();
         let _ = window.set_focus();
     } else {
-        let closing = app.clone();
-        let closing_label = label.clone();
-        let navigation = app.clone();
-        let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
-            .title("StarNet")
-            .inner_size(1280.0, 832.0)
-            .min_inner_size(960.0, 600.0)
-            .center()
-            .initialization_script(format!("{}{}", remote_initialization(port), crate::menu_bar_init_script(app)))
-            .on_navigation(move |url| {
-                // The remote document can open the isolated chooser, but cannot
-                // perform local setup/admin actions or invoke native commands.
-                if matches!(url.as_str(), "starnet-connect://setup" | "starnet-connect://setup/") {
-                    show_setup(navigation.clone());
-                    return false;
-                }
-                // A Mac-side appearance choice only: saved natively, no other native authority.
-                if crate::handle_menu_bar_navigation(&navigation, url) {
-                    return false;
-                }
-                url.scheme() == "http"
-                    && url.host_str() == Some("127.0.0.1")
-                    && url.port() == Some(port)
-            })
-            .build()
-            .map_err(|e| e.to_string())?;
-        window.on_window_event(move |event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                if let Some(remote) = closing.get_webview_window(&closing_label) {
-                    let _ = remote.hide();
-                }
-                close_station(&closing);
-            }
-        });
+        let window = build_remote_window(app, port, false)?;
         let _ = window.set_focus();
+    }
+    // The startup phase ends here. A startup window for another port never opened its station.
+    let startup = app
+        .state::<DesktopState>()
+        .startup_label
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take());
+    if let Some(other) = startup.filter(|other| *other != label) {
+        if let Some(window) = app.get_webview_window(&other) {
+            let _ = window.destroy();
+        }
     }
     *app.state::<DesktopState>()
         .remote_label
@@ -432,7 +551,9 @@ fn remote_initialization(port: u16) -> String {
         .filter(|rows| rows.is_array())
     {
         let source = rows.to_string();
-        script.push_str(&format!("try {{ if (!localStorage.getItem('starnet.viewer-import.v1')) {{ for (const [key,value] of {source}) {{ if (localStorage.getItem(key)===null) localStorage.setItem(key,value); }} localStorage.setItem('starnet.viewer-import.v1','1'); }} }} catch (_) {{}}"));
+        // Import only into this station's own origin: the same window first shows the bundled startup
+        // page, whose origin is shared with the local station's storage.
+        script.push_str(&format!("try {{ if (location.origin==='http://127.0.0.1:{port}' && !localStorage.getItem('starnet.viewer-import.v1')) {{ for (const [key,value] of {source}) {{ if (localStorage.getItem(key)===null) localStorage.setItem(key,value); }} localStorage.setItem('starnet.viewer-import.v1','1'); }} }} catch (_) {{}}"));
     }
     script
 }
@@ -748,6 +869,36 @@ mod tests {
             "tauri://example.com/",
         ] {
             assert!(!allows_native_commands("main", &source.parse().unwrap()));
+        }
+    }
+    #[test]
+    fn startup_windows_use_the_helpers_saved_station_port() {
+        assert_eq!(station_port_from_config(br#"{"host":"a","port":8790}"#), Some(8790));
+        assert_eq!(station_port_from_config(br#"{"host":"a"}"#), Some(8790));
+        assert_eq!(station_port_from_config(br#"{"port":"8791"}"#), Some(8791));
+        for invalid in [
+            &br#"{"port":18790}"#[..],
+            br#"{"port":80}"#,
+            br#"{"port":70000}"#,
+            br#"{"port":null}"#,
+            br#"{"port":8790.5}"#,
+            b"not json",
+        ] {
+            assert_eq!(station_port_from_config(invalid), None);
+        }
+    }
+    #[test]
+    fn only_the_bundled_startup_page_counts_and_it_grants_no_native_commands() {
+        let startup: tauri::Url = "tauri://localhost/station-host.html".parse().unwrap();
+        assert!(is_startup_page(&startup));
+        assert!(!allows_native_commands("station-remote-8790", &startup));
+        for other in [
+            "tauri://localhost/index.html",
+            "tauri://example.com/station-host.html",
+            "http://127.0.0.1:8790/station-host.html",
+            "http://tauri.localhost/station-host.html",
+        ] {
+            assert!(!is_startup_page(&other.parse().unwrap()));
         }
     }
 }
