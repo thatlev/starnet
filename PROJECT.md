@@ -7,6 +7,7 @@ Upstream history, MIT license and notices are retained. The public overview is [
 
 - [x] Add Settings → Appearance → MENU BAR ICON (Monochrome default, Color), saved natively on the Mac with the lifecycle preferences and applied to the menu bar icon immediately. Pages reach it only through `starnet-connect://menu-bar-icon/monochrome|color`, handled by both the local and remote station windows; no other native authority is exposed.
 - [x] Make the setup ("GET ACQUAINTED") panel use the theme's opaque panel colour instead of a fixed teal-black `#080b0b`, so it matches the COMMS panel it covers. The rule was identical to upstream; the station had been parked at a pending setup question, so the overlay was permanently visible.
+- [x] Fix LINK STATION padding in narrow Settings panes: the STARNET card's narrow-width rule zeroed the button's own left padding along with its indent. Verified 12px/12px button padding, aligned with the card content, at 417px and 279px list widths.
 - [ ] Rebuild and install the Mac app and server release; verify the icon, the setting and the panel colour.
 
 ## Next release (queued): agent-editable station configuration

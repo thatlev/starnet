@@ -140,7 +140,10 @@
   .settings-console .prov-select { grid-column:1; grid-row:1; }
   .settings-console .prov-addkey { grid-column:1; grid-row:2; justify-self:start; margin-left:42px; }
   .settings-console .prov-stat,.settings-console .prov-card:not(:has(.prov-addkey)) .prov-stat { grid-column:1; grid-row:3; justify-content:flex-start; text-align:left; padding-left:42px; }
-  .settings-console [data-provider="starnet"] :is(.prov-addkey,.prov-stat) { margin-left:0; padding-left:0; }
+  /* The STARNET card has no logo column to clear: drop the button's indent and the status line's indent only.
+     The button keeps its own padding — zeroing it put the ↗ glyph against the left edge. */
+  .settings-console [data-provider="starnet"] .prov-addkey { margin-left:0; }
+  .settings-console [data-provider="starnet"] .prov-stat { padding-left:0; }
 }
 @container settings-pane (max-width:340px) {
   .settings-console .settings-group { padding:14px; }
