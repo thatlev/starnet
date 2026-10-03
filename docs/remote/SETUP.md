@@ -24,7 +24,7 @@ Choose **Open server installer in Terminal**. The viewer transfers its bundled, 
 
 The installer creates a `starnet` service account, immutable releases under `/opt/starnet`, private data under `/var/lib/starnet`, and `starnet-remote.service`. Gateway port 18791 and runtime port 18792 bind only to server loopback. Do not expose either through a public firewall. The installer refuses to replace a running service. Existing-station upgrades use the explicit idle/backup procedure in [operations](OPERATIONS.md).
 
-When Terminal reports success, return to the viewer and test the connection. Configure model providers inside the station. An empty machine gets normal StarNet character onboarding; an existing station resumes its stored character and progress.
+When Terminal reports success, return to the viewer and test the connection. Configure model providers inside the station under **Settings → Providers**, or a private model gateway under **Settings → Gateway** ([gateway guide](GATEWAY.md)). An empty machine gets normal StarNet character onboarding; an existing station resumes its stored character and progress.
 
 ## Build and distribute a candidate
 

@@ -32,3 +32,12 @@ Public release signing/notarization and the official upstream PR are separate fr
 ## Startup window lifecycle
 
 After remote startup, the window switcher should show the station without a second black loading window. Close the remote station, reopen StarNet, then use Connection Setup to switch to This Computer and back. The local station should open normally, and reopening remote mode should retain the saved connection without bringing back the loading window.
+
+## Gateway settings section
+
+1. Open **Settings**. **GATEWAY** sits directly under **PROVIDERS** in the section list.
+2. In **Providers**, neither the provider cards nor **API Keys** should list the Gateway. Your other providers and keys, such as ChatGPT (Codex) and the custom GLM endpoint, should be unchanged.
+3. In **Gateway**, the card should show your gateway's status and the saved key row should show its masked key with **Update**, **Backups** and **Remove**. Open **Update** and **Backups**, then close them without saving. Do not remove the real key.
+4. Select the Gateway card. It should become the active provider exactly as before, and your agents should keep using the same models.
+
+See [the gateway guide](GATEWAY.md) for what each control does.

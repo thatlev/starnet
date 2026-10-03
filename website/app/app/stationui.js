@@ -4218,6 +4218,15 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   function visibleProviders() {
     return PROVIDERS.filter(p => !p.credits || creditsProv.state !== 'absent');
   }
+  // The private model gateway is the station's own infrastructure, not one more model vendor. It owns the
+  // SETTINGS ▸ GATEWAY section; PROVIDERS and API KEYS list only model services. scope: 'gateway' | 'models' |
+  // undefined (everything — the health repaint matches cards across both sections by data-provider).
+  const GATEWAY_PROVIDER = 'levserver';
+  function providerInScope(id, scope) {
+    if (scope === 'gateway') return id === GATEWAY_PROVIDER;
+    if (scope === 'models') return id !== GATEWAY_PROVIDER;
+    return true;
+  }
   function activeProv() { const h = H(); return (h && h.getProv && h.getProv()) || 'openrouter'; }
   let codexStatusKnown = null;        // last /api/auth/codex/status truth: { connected, expired, reason }
   let codexConnectionChecking = false;
@@ -4443,9 +4452,9 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     return '<span class="prov-logo' + (id === 'starnet' ? ' prov-logo-starnet' : '') + '" aria-hidden="true" style="--provider-icon:url(&quot;' + esc(new URL('assets/brand/' + asset, document.baseURI).href) + '&quot;)"></span>';
   }
 
-  function providersHtml() {
+  function providersHtml(scope) {
     const active = activeProv();
-    return visibleProviders().map((p, pi) => {
+    return visibleProviders().filter(p => providerInScope(p.id, scope)).map((p, pi) => {
       // The credits provider has its own card: no key to paste, no sign-in, and a status line that
       // states the BALANCE, because a paid provider reading "connected" at $0.00 would be a lie of
       // exactly the kind this panel exists to avoid.
@@ -4578,11 +4587,21 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       '<button class="bb sm" id="' + esc(pid) + '-inline-open" hidden>↗ OPEN PAGE</button>' +
       '</div>';
   }
-  function keysHtml() {
-    const keys = connectedKeys(), active = activeProv();
+  function keysHtml(scope) {
+    // Row indexes (data-i, key-edit-<i>) stay positions in the FULL connectedKeys() list, which is what the
+    // shared action handler resolves, so a row keeps its identity whichever section renders it.
+    const allKeys = connectedKeys(), active = activeProv();
+    const keys = allKeys.filter(k => providerInScope(k.provider, scope));
     const addProvider = active === 'codex' ? 'openrouter' : active;
+    // The gateway's own card carries its ADD KEY editor, so neither list adds a second empty-state form for it.
+    if (scope === 'gateway') {
+      if (!keys.length) return '';
+    } else if (!providerInScope(addProvider, scope)) {
+      if (!keys.length) return '<div class="key-empty"><p>No API keys connected.</p></div>';
+    }
     const hasAddProvider = keys.some(k => k.provider === addProvider);
-    if (!keys.length) return providerAcceptsKey(addProvider) ? addKeyHtml(addProvider, true) : '<div class="key-empty"><p>No API keys connected.</p></div>';
+    const offerAdd = scope !== 'gateway' && providerInScope(addProvider, scope) && providerAcceptsKey(addProvider);
+    if (!keys.length) return offerAdd ? addKeyHtml(addProvider, true) : '<div class="key-empty"><p>No API keys connected.</p></div>';
 /*
     if (!keys.length) {
       // reachable in-session via REMOVE — let the user reconnect right here, no CONNECT-screen round-trip.
@@ -4595,7 +4614,8 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     }
     return keys.map((k, i) => {
 */
-    const rows = keys.map((k, i) => {
+    const rows = allKeys.map((k, i) => {
+      if (!providerInScope(k.provider, scope)) return '';
       // The credential row follows the same truth contract as the provider card above. Selection is useful context,
       // but ACTIVE is reserved for a selected model whose endpoint/credential probe proved it can run.
       const health = providerHealth[k.provider];
@@ -4689,7 +4709,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
         '</div>' +
         baseBlock;
     });
-    if (providerAcceptsKey(addProvider) && !hasAddProvider) rows.push(addKeyHtml(addProvider, false));
+    if (offerAdd && !hasAddProvider) rows.push(addKeyHtml(addProvider, false));
     return rows.join('');
   }
   // edit-in-place / guarded remove for a stored key. Mirrors the CLEAR arm/confirm pattern
@@ -5969,14 +5989,21 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     const secProviders =
       // NB: no inner "PROVIDERS" heading — the console section head already prints PROVIDERS above the pane
       // (a second identical h4 read as a duplicated title in sys-settings.png).
-      '<div class="prov-list">' + providersHtml() + '</div>' +
+      '<div class="prov-list">' + providersHtml('models') + '</div>' +
       '<h4 class="ms-h">API KEYS</h4>' +
-      '<div class="key-list">' + keysHtml() + '</div>' +
+      '<div class="key-list">' + keysHtml('models') + '</div>' +
       '<p class="set-about">Credentials are saved locally and used to authenticate with the selected service. Saved keys stay masked. Desktop storage uses the OS keychain when available.</p>' +
       // STORE / MANAGED CREDITS — rendered ONLY when the sidecar reports a configured credits backend (/api/credits).
       // When credits aren't wired this stays an empty node (no dead card, no fake balance — the honesty law). wireCredits
       // fetches the real balance + history and the external purchase link; buying opens a browser tab, never an in-app form.
       '<div id="credits-store"></div>';
+    // GATEWAY — the private model gateway gets its own section instead of sitting among model API keys. Same card,
+    // same key row and the same shared handlers (wireProviderActions/wireKeyActions run across every pane).
+    const gatewayKeys = keysHtml('gateway');
+    const secGateway =
+      '<div class="prov-list">' + providersHtml('gateway') + '</div>' +
+      (gatewayKeys ? '<div class="key-list">' + gatewayKeys + '</div>' : '') +
+      '<p class="set-about">StarNet sends model requests to your private gateway, which runs them on the model accounts connected to it. Select it here to use it, and update or remove its key here. The key stays masked; which models it allows is managed on the gateway itself.</p>';
     const secAutonomy =
       // AUTONOMY — the "alive between sessions" dial: two independent axes (autonomy.js). Reuses the theme-picker
       // button idiom (.set-themes/.set-theme) so it needs no new CSS. The live describe() line keeps it honest.
@@ -6457,6 +6484,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
 
     const sections = [
       { id: 'providers', label: 'PROVIDERS', glyph: '⌁', desc: 'Connect an AI service and manage its saved credentials.', build: frag(secProviders) },
+      { id: 'gateway', label: 'GATEWAY', glyph: '◇', desc: 'Connect your private model gateway and manage its key.', build: frag(secGateway) },
       { id: 'autonomy', label: 'AUTONOMY', glyph: '◈', desc: 'Choose when agents start work, what they can do, and how often.', build: frag(secAutonomy) },
       { id: 'nightshift', label: 'NIGHT SHIFT', glyph: '☾', desc: 'See unattended activity, its current focus, and recent decisions.', build: frag(secNightShift) },
       { id: 'permissions', label: 'PERMISSIONS', glyph: '⊘', desc: 'Set access and approval rules for the station or individual agents.', build: frag(secPermissions) },

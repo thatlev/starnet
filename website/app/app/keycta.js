@@ -66,17 +66,22 @@ const KeyCTA = (() => {
   }
   function missingKey() { return !!gapOf(); }
 
-  // every door out of this banner lands on SETTINGS ▸ PROVIDERS — the one surface that owns keys, the STARNET
-  // link, the provider switch and the Ollama endpoint. openTerm's section arg is the console-rail deep link.
-  function openSettings() {
-    if (typeof StationUI !== 'undefined' && StationUI.openTerm) { StationUI.openTerm('settings', 'providers'); return; }
+  // every door out of this banner lands on SETTINGS ▸ PROVIDERS — the one surface that owns model keys, the STARNET
+  // link, the provider switch and the Ollama endpoint — except a missing private-gateway key, which lives in
+  // SETTINGS ▸ GATEWAY. openTerm's section arg is the console-rail deep link. (Also bound directly as a click
+  // listener, so anything other than the literal 'gateway' means PROVIDERS.)
+  function openSettings(section) {
+    if (typeof StationUI !== 'undefined' && StationUI.openTerm) {
+      if (section === 'gateway') { StationUI.openTerm('settings', 'gateway'); return; }
+      StationUI.openTerm('settings', 'providers'); return;
+    }
     const b = document.querySelector('.bb[data-term="settings"]'); if (b) b.click();
   }
 
   function fixGap() {
     const gap = gapOf();
     if (gap && gap.kind === 'nomodel' && typeof ModelDock !== 'undefined' && ModelDock.open) { ModelDock.open(); return; }
-    openSettings();
+    openSettings(gap && gap.kind === 'nokey' && gap.provider === 'levserver' ? 'gateway' : 'providers');
   }
 
   function retireObsoletePrompt(gap) {

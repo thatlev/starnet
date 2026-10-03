@@ -44,7 +44,7 @@ The LevServer model key allows the gateway's subscription models and preserves a
 | Mac viewer | Existing connection: `http://127.0.0.1:8790`; new stations use separate saved loopback ports |
 | Connection setup | `http://127.0.0.1:18790` |
 
-Use `ssh lev-server-direct starnet status` for service status. Use `journalctl -u starnet-remote` on the server for diagnostics. Do not print credential files or `gh auth token` into logs. Remote provider changes belong in Settings > Providers; the dedicated LevServer gateway subscription remains managed through Control.
+Use `ssh <your-server> starnet status` for service status (the maintainer's alias is `lev-server-direct`). Use `journalctl -u starnet-remote` on the server for diagnostics. Do not print credential files or `gh auth token` into logs. Model provider changes belong in Settings > Providers. The private model gateway's key lives in Settings > Gateway ([gateway guide](GATEWAY.md)). Which models that key may use is managed on the gateway itself (LevServer Control for the maintainer's server).
 
 ## Upgrade and recovery
 

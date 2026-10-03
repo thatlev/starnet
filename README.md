@@ -19,6 +19,13 @@
 
 </div>
 
+> **This is an unofficial fork.** [thatlev/starnet](https://github.com/thatlev/starnet) adds a
+> remote station to upstream [androoAGI/starnet](https://github.com/androoAGI/starnet): a Linux
+> server keeps your agents running, and the Mac app reconnects to it over SSH. It is not affiliated
+> with or endorsed by the StarNet project. Start with **[FORK.md](FORK.md)** for what is different,
+> setup and current limits. The rest of this README is upstream's and describes StarNet itself;
+> its download links point to official upstream releases, which do not include the fork's changes.
+
 StarNet is a local-first desktop harness where you create AI agents, organize them into a
 pixel-art space station, and watch them perform real work with real models and tools. The
 station is not decoration — it is a projection of live runtime state, and the product contract
@@ -174,6 +181,14 @@ MIT means you may fork, modify, and redistribute the code, including commerciall
 may not do is ship it as StarNet: forks and derivatives must use their own name, logo, and
 artwork, and must not present themselves as this project or as endorsed by it.
 
-## Remote station extension
+## Remote station extension (this fork)
 
-This fork also supports a server-owned station with a reconnectable Mac viewer. See [remote operations](docs/remote/OPERATIONS.md) for installation, credential storage and recovery. The standard StarNet desktop workflow above remains available.
+This fork adds a server-owned station with a reconnectable Mac viewer, owner-only GitHub sign-in,
+server-held provider settings and a private model gateway. The standard StarNet desktop workflow
+above remains available unchanged.
+
+- [FORK.md](FORK.md): overview, architecture, getting started and known limits.
+- [Connection setup](docs/remote/SETUP.md): connect to or install a server from the desktop app.
+- [Operations](docs/remote/OPERATIONS.md): security model, installed paths, upgrades and recovery.
+- [Private model gateway](docs/remote/GATEWAY.md): the **Settings → Gateway** provider.
+- [Acceptance checks](docs/remote/TESTING.md): manual checks for an installed build.

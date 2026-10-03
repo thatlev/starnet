@@ -100,3 +100,12 @@ Operational procedures for cutting and shipping a build.
   readiness.
 - **STARNET_UPDATES.md** — how the Tauri signed-update mechanism works and the user update loop.
 - `LAUNCH_CHECKLIST.md`, `INSTALLER_REBUILD_0.1.0_PLAN.md` also touch release readiness.
+
+## Remote station (this fork)
+
+Living reference for the fork's server-owned station. Start with [FORK.md](../FORK.md).
+
+- **remote/SETUP.md** — connect the desktop app to a server, or install a new one.
+- **remote/OPERATIONS.md** — security model, installed paths, upgrades and recovery.
+- **remote/GATEWAY.md** — the private model gateway provider and **Settings → Gateway**.
+- **remote/TESTING.md** — manual acceptance checks for an installed build.

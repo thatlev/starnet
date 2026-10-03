@@ -1,7 +1,21 @@
 # StarNet Remote
 
-Private fork of androoAGI/starnet, updated through v0.12.3 (`3ba5b84922f3b62caa4e159999ef3acc82af2a3e`) on its default `feat/harness-backend` branch.
-Upstream history, MIT license and notices are retained.
+Public, unofficial fork of androoAGI/starnet, updated through v0.12.3 (`3ba5b84922f3b62caa4e159999ef3acc82af2a3e`) on its default `feat/harness-backend` branch.
+Upstream history, MIT license and notices are retained. The public overview is [FORK.md](FORK.md); this file is the release log.
+
+## Active release: Gateway settings section and public fork
+
+- [x] Move the private model gateway out of Providers / API Keys into its own Settings → Gateway section, keeping its select, add-key, update, backups and remove controls.
+- [x] Route the "no key" banner to Gateway when the gateway is the missing provider.
+- [x] Document the fork (FORK.md, docs/remote/GATEWAY.md, README notice, setup/operations/testing updates).
+- [ ] Rebuild and reinstall the Mac app and the server release; remove old builds.
+- [ ] Make the fork repository public after the history scan.
+
+The gateway section reuses the existing card and key-row markup and handlers; key rows keep their indexes in the full credential list, so actions resolve the same stored entry from either section. A local fixture with a dummy gateway key confirmed the section order, its absence from Providers/API Keys, Update and Backups editors, the two-step Remove, and selection, with the section remaining selected after each repaint.
+
+Pre-publication scan: gitleaks found no secrets in the 32 fork commits on `main` or the 8 on `codex/remote-uplink-proposal`. A review for hostnames, addresses, emails and account IDs found only the existing commit author email and documented SSH aliases. Upstream is public under MIT; Actions stay disabled on the fork.
+
+Known pre-existing gate issues, unchanged by this release: `settings-save-failure.test.js` fails in its own harness setup (`window is not defined`) on the previous `main` as well, and the product-claims ledger's README byte lock has not matched since the fork first added its remote-station README section. The ledger is upstream's reviewed claims authority and was not re-blessed.
 
 ## Active follow-up: retire the startup window
 
