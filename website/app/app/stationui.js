@@ -6323,12 +6323,12 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       // MENU BAR ICON — a Mac-side choice, present only when the native macOS app injected its state. It is
       // saved by the app on this Mac (never in the station save), so it holds for local and remote stations alike.
       (window.__STARNET_MENU_BAR__
-        ? '<h4 class="ms-h">MENU BAR ICON <span class="dim">— how StarNet appears in the macOS menu bar</span></h4>' +
+        ? '<h4 class="ms-h">MENU BAR ICON</h4>' +
           '<div class="set-themes" id="set-menubar" role="group" aria-label="Menu bar icon">' +
             '<button class="set-theme" data-menubar="monochrome" aria-pressed="' + (window.__STARNET_MENU_BAR__.monochrome ? 'true' : 'false') + '">MONOCHROME</button>' +
             '<button class="set-theme" data-menubar="color" aria-pressed="' + (window.__STARNET_MENU_BAR__.monochrome ? 'false' : 'true') + '">COLOR</button>' +
           '</div>' +
-          '<p class="set-about">Saved on this Mac. Monochrome follows the light or dark menu bar like other menu bar icons.</p>'
+          '<p class="set-about">How StarNet appears in the macOS menu bar. Monochrome matches the light or dark menu bar like other menu bar icons. Saved on this Mac.</p>'
         : '') +
       '<span class="msg" id="appearance-msg" aria-live="polite"></span>';
     const secNotifs =

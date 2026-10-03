@@ -8,7 +8,13 @@ Upstream history, MIT license and notices are retained. The public overview is [
 - [x] Add Settings → Appearance → MENU BAR ICON (Monochrome default, Color), saved natively on the Mac with the lifecycle preferences and applied to the menu bar icon immediately. Pages reach it only through `starnet-connect://menu-bar-icon/monochrome|color`, handled by both the local and remote station windows; no other native authority is exposed.
 - [x] Make the setup ("GET ACQUAINTED") panel use the theme's opaque panel colour instead of a fixed teal-black `#080b0b`, so it matches the COMMS panel it covers. The rule was identical to upstream; the station had been parked at a pending setup question, so the overlay was permanently visible.
 - [x] Fix LINK STATION padding in narrow Settings panes: the STARNET card's narrow-width rule zeroed the button's own left padding along with its indent. Verified 12px/12px button padding, aligned with the card content, at 417px and 279px list widths.
-- [ ] Rebuild and install the Mac app and server release; verify the icon, the setting and the panel colour.
+- [x] Rebuild and install the Mac app and server release; verify the icon, the setting and the panel colour.
+
+Verified in the installed app: Appearance shows MENU BAR ICON with Monochrome selected by default; choosing Color and then Monochrome wrote `menuBarIconMonochrome` false/true to `~/Library/Application Support/ai.skynet.harness/lifecycle.json`, and the chips followed the state the native app reported back. The setup panel now samples warm (≈ rgb 13,8,6) instead of neutral blue-black. The menu bar icon itself was not visually captured (screen capture here excludes other apps' menu bar extras); 53 native tests cover the whitelist, icon decoding and preference defaults.
+
+## Open bug: native remote window can stay on FEED: RECONNECTING
+
+The installed Mac app's remote window sometimes stays on LINK DOWN / FEED: RECONNECTING for minutes, including in front and after relaunches; another launch may go live within seconds. On the same proxy and server, Safari and Chromium go live immediately, and Chromium also stays live with the native init flags (`__STARNET_NATIVE__`, `__STARNET_CONNECTION_SETUP__`, `__STARNET_MENU_BAR__`) injected. The event stream returns 200 with a ready frame, the snapshot returns 200, the helper reports connected, and the server has no SSE client limit. Remaining suspects are state specific to the app's own WebKit store (`~/Library/WebKit/ai.skynet.harness`) or WKWebView behaviour in the Tauri window. Next step: a diagnostic build with an inspectable web view to read the bridge state directly. It predates this release (seen on `90af4a36d`). An earlier note here attributing it to background-window throttling was wrong and is withdrawn.
 
 ## Next release (queued): agent-editable station configuration
 
@@ -27,7 +33,7 @@ Installed: Mac and server source `2ed7b955e3389258a615ac509a96af7df8ab4373`. The
 
 Old builds removed at Lev's request: all superseded server releases under `/opt/starnet/releases` (only `2ed7b955e` remains; any revision can be rebuilt from Git), and on the Mac the replaced app bundles, retired StarNet Remote bundles, temporary build folders and the debug bundle were moved to the Trash. Data backups were kept.
 
-Observed: when the Mac app opens behind other windows, macOS throttles the occluded WebKit view and the station can show LINK DOWN until the window is brought forward; it then goes live within seconds. Safari and Chromium viewers of the same proxy were live, and the event stream, snapshot and session were healthy throughout.
+Observed: the native remote window can show LINK DOWN after launch; see the open bug above.
 
 The gateway section reuses the existing card and key-row markup and handlers; key rows keep their indexes in the full credential list, so actions resolve the same stored entry from either section. A local fixture with a dummy gateway key confirmed the section order, its absence from Providers/API Keys, Update and Backups editors, the two-step Remove, and selection, with the section remaining selected after each repaint.
 
