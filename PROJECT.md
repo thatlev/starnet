@@ -3,6 +3,16 @@
 Public, unofficial fork of androoAGI/starnet, updated through v0.12.3 (`3ba5b84922f3b62caa4e159999ef3acc82af2a3e`) on its default `feat/harness-backend` branch.
 Upstream history, MIT license and notices are retained. The public overview is [FORK.md](FORK.md); this file is the release log.
 
+## Active release: one window for remote launches
+
+- [x] Open a saved remote station in a single window. Previously the app showed the bundled "OPENING YOUR STATION" page in the privileged `main` window, then created a separate `station-remote-<port>` window and destroyed the first, so two windows appeared in turn. Now the remote window is created at launch on the bundled page and navigates itself to the station when the helper is ready. Loading the station inside `main` was rejected because its initialization script carries the local runtime token.
+- [x] Keep the boundaries: the remote label never passes the native-command gate (bundled page included; the page has no scripts); the bundled page is allowed only until the window first opens its station; the legacy viewer-storage import runs only on the station origin, so it cannot write into the local station's storage; dock, tray and second-launch reveal resolve the window by its label from launch; Connection Setup retires a window still on the startup page, as it retired the old placeholder.
+- [x] Verify the installed build with a read-only CoreGraphics window sampler (200 ms): normal launches show one window id from first paint to the live station (window at ≈3 s); with the helper deliberately blocked, the same window shows the startup page and the existing connection alert; Connection Setup then retires it cleanly and Return to station opens the live station; re-opening the running app keeps one process and one window; Command-Q leaves no app, helper or SSH process and frees both loopback ports. 55 native tests pass, including startup-port parsing and startup-page/command-gate checks.
+
+Build note: Xcode 27's `strip` (installed 2026-10-02) rewrites the metadata of stripped proc-macro dylibs, so a cold release build failed with "can't find crate" (rustc: "Rejecting via crate name"). `[profile.release.build-override] strip = false` leaves build-time code unstripped; the shipped binary is still stripped. Incident: at 17:20–17:21 on 2026-10-03 `node_modules` was removed from nearly every project under `~/Documents/VibeCoding` (not by this release's cleanup, which only removed named app bundles and build folders). StarNet's dependencies were restored with `npm ci` (root and `remote`); the staged runtime dependencies are byte-identical to the previous installed build. npm 11 skipped four install scripts; node-pty and onnxruntime binaries match the previous build.
+
+In this release's five native launches the station reached FEED: LIVE each time; the open LINK DOWN bug below stays open until it is understood.
+
 ## Active release: menu bar icon and setup panel colour
 
 - [x] Add Settings → Appearance → MENU BAR ICON (Monochrome default, Color), saved natively on the Mac with the lifecycle preferences and applied to the menu bar icon immediately. Pages reach it only through `starnet-connect://menu-bar-icon/monochrome|color`, handled by both the local and remote station windows; no other native authority is exposed.
