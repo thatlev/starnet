@@ -115,8 +115,6 @@
 @media (max-width: 680px) {
   .settings-console .settings-group { padding: 14px; }
   .settings-console :is(#budget-form,#tm-form,#adv-form) > .set-row { grid-template-columns: 1fr; gap: 6px; }
-  .settings-console .prov-card { grid-template-columns: 1fr; }
-  .settings-console .prov-addkey { justify-self: start; margin-left: 20px; }
   .settings-console .set-slider { grid-template-columns: 82px minmax(0,1fr) 40px; gap: 8px; }
 }
 
@@ -132,7 +130,7 @@
 .prov-logo { display:inline-block; width:28px; height:28px; flex:none; background:currentColor; color:var(--ph-bright); mask:var(--provider-icon) center/contain no-repeat; }
 .settings-console .prov-stat { grid-column:2; grid-row:2; justify-content:flex-end; text-align:right; white-space:normal; align-self:start; letter-spacing:.35px; }
 .settings-console .prov-card:not(:has(.prov-addkey)) .prov-stat { grid-row:1 / 3; align-self:center; }
-.settings-console .prov-addkey { grid-column:2; grid-row:1; justify-self:end; align-self:end; margin:0; min-height:36px; }
+.settings-console .prov-addkey { grid-column:2; grid-row:1; justify-self:stretch; align-self:end; box-sizing:border-box; width:100%; min-width:0; margin:0; min-height:36px; white-space:normal; text-align:center; }
 .settings-console .prov-name { flex-wrap:wrap; gap:6px; }
 .settings-console .prov-card[data-provider="starnet"] { position:relative; isolation:isolate; border-color:rgba(var(--ph-rgb),.45); background:linear-gradient(125deg,rgba(var(--ph-rgb),.12),rgba(var(--ph-rgb),.025)); box-shadow:inset 0 1px 0 rgba(var(--ph-bright-rgb),.12); opacity:1; }
 .settings-console .prov-card[data-provider="starnet"]::before { content:''; position:absolute; inset:0; padding:1px; border-radius:inherit; pointer-events:none; background:conic-gradient(from var(--ov-border-angle),transparent 0deg 265deg,rgba(var(--ph-rgb),.25) 300deg,var(--ph-bright) 340deg,transparent 360deg); mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0); mask-composite:exclude; animation:ov-orbit calc(var(--t-slow)*18) linear infinite; }
@@ -145,12 +143,9 @@
 @container settings-providers (max-width:480px) {
   .settings-console .prov-card { grid-template-columns:minmax(0,1fr); gap:10px; }
   .settings-console .prov-select { grid-column:1; grid-row:1; }
-  .settings-console .prov-addkey { grid-column:1; grid-row:2; justify-self:start; margin-left:42px; }
-  .settings-console .prov-stat,.settings-console .prov-card:not(:has(.prov-addkey)) .prov-stat { grid-column:1; grid-row:3; justify-content:flex-start; text-align:left; padding-left:42px; }
-  /* The STARNET card has no logo column to clear: drop the button's indent and the status line's indent only.
-     The button keeps its own padding — zeroing it put the ↗ glyph against the left edge. */
-  .settings-console [data-provider="starnet"] .prov-addkey { margin-left:0; }
-  .settings-console [data-provider="starnet"] .prov-stat { padding-left:0; }
+  /* Actions share the card's inner edges regardless of the provider's logo layout. */
+  .settings-console .prov-addkey { grid-column:1; grid-row:2; }
+  .settings-console .prov-stat,.settings-console .prov-card:not(:has(.prov-addkey)) .prov-stat { grid-column:1; grid-row:3; justify-content:flex-start; text-align:left; padding-left:0; }
 }
 @container settings-pane (max-width:340px) {
   .settings-console .settings-group { padding:14px; }

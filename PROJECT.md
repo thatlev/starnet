@@ -3,6 +3,14 @@
 Public, unofficial fork of androoAGI/starnet, updated through v0.12.3 (`3ba5b84922f3b62caa4e159999ef3acc82af2a3e`) on its default `feat/harness-backend` branch.
 Upstream history, MIT license and notices are retained. The public overview is [FORK.md](FORK.md); this file is the release log.
 
+## Active release: aligned provider actions
+
+- [x] Give LINK STATION, ADD KEY and SIGN IN a shared action width and consistent edges at wide and narrow pane sizes, without changing their behavior.
+- [x] Verify enlarged text, focus clearance, status alignment and the inline key editor.
+- [ ] Publish the CSS-only runtime update and retain rollback/data backups.
+
+The old narrow layout indented most actions by 42px to clear a provider logo, but made an exception for STARNET MANAGED. Actions now fill a shared 190px column in wide cards and the card's inner width in narrow cards; narrow status labels share their left edge. The existing labels, button padding, focus outlines and card shapes remain intact, with no additional wrappers or controls. A disposable Chromium regression reproduced the old misalignment and now passes at six pane widths (279–640px, including both sides of the 480px breakpoint) and 100%, 150% and 200% interface zoom. Keyboard focus and the inline key editor's open/close actions pass. The related provider/OAuth guards (136 assertions) and three delayed-settings-refresh tests also pass. The website mirror is synchronized.
+
 ## Active release: one window for remote launches
 
 - [x] Open a saved remote station in a single window. Previously the app showed the bundled "OPENING YOUR STATION" page in the privileged `main` window, then created a separate `station-remote-<port>` window and destroyed the first, so two windows appeared in turn. Now the remote window is created at launch on the bundled page and navigates itself to the station when the helper is ready. Loading the station inside `main` was rejected because its initialization script carries the local runtime token.
