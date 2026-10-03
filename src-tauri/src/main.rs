@@ -2621,6 +2621,87 @@ fn update_lifecycle_preferences(
     Ok(next)
 }
 
+// ---- Menu bar icon (macOS) ----
+// A Mac-side appearance choice, stored with the native lifecycle preferences so it survives rebuilds and is
+// independent of which station (local or remote) is open. Pages reach it only through one whitelisted
+// navigation (starnet-connect://menu-bar-icon/monochrome|color), which grants no other native authority.
+const MENU_BAR_TEMPLATE_ICON: &[u8] = include_bytes!("../icons/menubar-template.png");
+
+fn menu_bar_icon_choice(url: &tauri::Url) -> Option<bool> {
+    if url.scheme() != "starnet-connect" || url.host_str() != Some("menu-bar-icon") {
+        return None;
+    }
+    match url.path().trim_matches('/') {
+        "monochrome" => Some(true),
+        "color" => Some(false),
+        _ => None,
+    }
+}
+
+/// Only macOS renders template images; elsewhere a black template would vanish on a dark taskbar.
+fn effective_menu_bar_monochrome(preference: bool) -> bool {
+    cfg!(target_os = "macos") && preference
+}
+
+fn apply_menu_bar_icon(app: &AppHandle, preference: bool) {
+    let Some(tray) = app.tray_by_id("starnet-tray") else { return };
+    let monochrome = effective_menu_bar_monochrome(preference);
+    let icon = if monochrome {
+        tauri::image::Image::from_bytes(MENU_BAR_TEMPLATE_ICON).ok()
+    } else {
+        app.default_window_icon().cloned()
+    };
+    if let Some(icon) = icon {
+        let _ = tray.set_icon(Some(icon));
+    }
+    let _ = tray.set_icon_as_template(monochrome);
+}
+
+fn menu_bar_state_script(monochrome: bool) -> String {
+    format!("window.__STARNET_MENU_BAR__={{monochrome:{monochrome}}};window.dispatchEvent(new Event('starnet-menubar'));")
+}
+
+/// Initial state for a station page. Absent off macOS, so the Settings control only appears where it applies.
+fn menu_bar_init_script(app: &AppHandle) -> String {
+    if !cfg!(target_os = "macos") {
+        return String::new();
+    }
+    app.try_state::<AppState>()
+        .map(|state| {
+            let monochrome = lifecycle_preferences_snapshot(state.inner()).menu_bar_icon_monochrome;
+            format!("window.__STARNET_MENU_BAR__={{monochrome:{monochrome}}};")
+        })
+        .unwrap_or_default()
+}
+
+/// Handle the whitelisted page→native menu bar choice. Returns true when the URL was this choice, so the
+/// caller cancels that navigation. The saved (not the requested) value is applied and reported back.
+fn handle_menu_bar_navigation(app: &AppHandle, url: &tauri::Url) -> bool {
+    let Some(monochrome) = menu_bar_icon_choice(url) else { return false };
+    if !cfg!(target_os = "macos") {
+        return true;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let Some(state) = app.try_state::<AppState>() else { return };
+        let saved = match update_lifecycle_preferences(state.inner(), |value| {
+            value.menu_bar_icon_monochrome = monochrome
+        }) {
+            Ok(preferences) => preferences.menu_bar_icon_monochrome,
+            Err(_) => lifecycle_preferences_snapshot(state.inner()).menu_bar_icon_monochrome,
+        };
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            apply_menu_bar_icon(&handle, saved);
+            let script = menu_bar_state_script(saved);
+            for (_, window) in handle.webview_windows() {
+                let _ = window.eval(&script);
+            }
+        });
+    });
+    true
+}
+
 /// Tray menu dispatch. Open reveals the window; Pause Automation fires the E-STOP so background work stops even
 /// with the window closed; Quit drains + kills the sidecar and exits the app (no daemon left behind).
 /// Pause/Quit run their bounded network work on a worker thread — tray menu events arrive on the main loop and
@@ -3864,12 +3945,16 @@ fn build_main_window(app: &AppHandle, location_choice: &str) -> tauri::Result<ta
     // MIN/MAX/CLOSE riding the Commander's phosphor theme. macOS/browser never set it.
     #[cfg(windows)]
     let init = format!("{init}window.__STARNET_CUSTOM_CHROME__=1;");
+    let init = format!("{init}{}", menu_bar_init_script(app));
+    let navigation = app.clone();
 
     let main_window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App(if location_choice == "local" { "index.html" } else { "station-host.html" }.into()))
         .title("StarNet")
         .inner_size(1280.0, 832.0)
         .min_inner_size(960.0, 600.0)
         .initialization_script(&init)
+        // Only the whitelisted menu bar choice is intercepted; every other navigation behaves as before.
+        .on_navigation(move |url| !handle_menu_bar_navigation(&navigation, url))
         .center()
         .visible(false)
         // Page-load hooks fire for Started AND Finished. Reveal only once,
@@ -4181,7 +4266,17 @@ fn main() {
                             show_main_window(tray.app_handle());
                         }
                     });
-                if let Some(icon) = app.default_window_icon().cloned() {
+                let menu_bar_monochrome = effective_menu_bar_monochrome(
+                    lifecycle_preferences_snapshot(app.state::<AppState>().inner()).menu_bar_icon_monochrome,
+                );
+                let tray_icon = if menu_bar_monochrome {
+                    tauri::image::Image::from_bytes(MENU_BAR_TEMPLATE_ICON).ok()
+                } else {
+                    None
+                };
+                if let Some(icon) = tray_icon {
+                    tray_builder = tray_builder.icon(icon).icon_as_template(true);
+                } else if let Some(icon) = app.default_window_icon().cloned() {
                     tray_builder = tray_builder.icon(icon);
                 }
                 tray_builder.build(app)?;
@@ -4682,5 +4777,27 @@ mod webview_cache_purge_tests {
         ));
         let removed = purge_webview2_caches(&base, &None);
         assert!(removed.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod menu_bar_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_two_whitelisted_menu_bar_choices_are_recognised() {
+        let parse = |value: &str| menu_bar_icon_choice(&value.parse::<tauri::Url>().unwrap());
+        assert_eq!(parse("starnet-connect://menu-bar-icon/monochrome"), Some(true));
+        assert_eq!(parse("starnet-connect://menu-bar-icon/color"), Some(false));
+        assert_eq!(parse("starnet-connect://menu-bar-icon/color/"), Some(false));
+        assert_eq!(parse("starnet-connect://menu-bar-icon/blue"), None);
+        assert_eq!(parse("starnet-connect://setup"), None);
+        assert_eq!(parse("http://menu-bar-icon/monochrome"), None);
+        assert_eq!(parse("http://127.0.0.1:8790/"), None);
+    }
+
+    #[test]
+    fn the_template_icon_is_a_decodable_png() {
+        assert!(tauri::image::Image::from_bytes(MENU_BAR_TEMPLATE_ICON).is_ok());
     }
 }

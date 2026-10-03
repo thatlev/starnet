@@ -5969,6 +5969,16 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     }
   }
 
+  // MENU BAR ICON chips follow the state the native macOS app reports (window.__STARNET_MENU_BAR__).
+  let menubarListening = false;
+  function syncMenubarChips() {
+    const mono = !!(window.__STARNET_MENU_BAR__ && window.__STARNET_MENU_BAR__.monochrome);
+    document.querySelectorAll('#set-menubar [data-menubar]').forEach(x => {
+      const on = (x.dataset.menubar === 'monochrome') === mono;
+      x.classList.toggle('sel', on);
+      x.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
   function buildSettings(body) {
     const settingsWindow = body.closest('.term');
     if (settingsWindow) settingsWindow.classList.add('settings-console');
@@ -6310,6 +6320,16 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       // TERMINAL AUDIO is a sound control, not a display one — its own header (it also gates notification chimes).
       '<h4 class="ms-h">SOUND</h4>' +
       '<label class="set-row"><input type="checkbox" id="set-sound" ' + (s.sound ? 'checked' : '') + '> TERMINAL AUDIO <span class="dim">— UI &amp; notification sounds</span></label>' +
+      // MENU BAR ICON — a Mac-side choice, present only when the native macOS app injected its state. It is
+      // saved by the app on this Mac (never in the station save), so it holds for local and remote stations alike.
+      (window.__STARNET_MENU_BAR__
+        ? '<h4 class="ms-h">MENU BAR ICON <span class="dim">— how StarNet appears in the macOS menu bar</span></h4>' +
+          '<div class="set-themes" id="set-menubar" role="group" aria-label="Menu bar icon">' +
+            '<button class="set-theme" data-menubar="monochrome" aria-pressed="' + (window.__STARNET_MENU_BAR__.monochrome ? 'true' : 'false') + '">MONOCHROME</button>' +
+            '<button class="set-theme" data-menubar="color" aria-pressed="' + (window.__STARNET_MENU_BAR__.monochrome ? 'false' : 'true') + '">COLOR</button>' +
+          '</div>' +
+          '<p class="set-about">Saved on this Mac. Monochrome follows the light or dark menu bar like other menu bar icons.</p>'
+        : '') +
       '<span class="msg" id="appearance-msg" aria-live="polite"></span>';
     const secNotifs =
       // NOTIFICATIONS — per-category on/off + a notification sound toggle (P1-8). Each is HONORED at emit time in
@@ -6565,6 +6585,24 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     wireSlider(host.querySelector('#set-static'), v => { s.staticLevel = clampN(v, 0, 200, 100); sliderVal('#set-static-val', s.staticLevel + '%'); });
     const bind = (id, key) => host.querySelector(id).addEventListener('change', ev => { s[key] = ev.target.checked; applySettings(); save(); flashSaved(appMsg()); });
     bind('#set-flicker', 'flicker'); bind('#set-sound', 'sound');
+    // MENU BAR ICON — ask the native app through its one whitelisted navigation; the chips then follow the
+    // state the app reports back after saving (starnet-menubar), so a failed save never shows as applied.
+    const menubarChips = host.querySelectorAll('#set-menubar [data-menubar]');
+    if (menubarChips.length) {
+      syncMenubarChips();
+      if (!menubarListening) {   // once per page: settings rebuilds must not stack listeners on detached panes
+        menubarListening = true;
+        window.addEventListener('starnet-menubar', () => {
+          syncMenubarChips();
+          const msg = document.querySelector('#appearance-msg');
+          if (msg) flashSaved(msg);
+        });
+      }
+      menubarChips.forEach(b => b.addEventListener('click', () => {
+        sfx('click');
+        window.location.href = 'starnet-connect://menu-bar-icon/' + (b.dataset.menubar === 'color' ? 'color' : 'monochrome');
+      }));
+    }
     const lightingChips = host.querySelectorAll('#set-lighting [data-lighting]');
     lightingChips.forEach(b => b.addEventListener('click', () => {
       s.roomLighting = resolveRoomLighting(b.dataset.lighting);

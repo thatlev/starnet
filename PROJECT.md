@@ -3,6 +3,16 @@
 Public, unofficial fork of androoAGI/starnet, updated through v0.12.3 (`3ba5b84922f3b62caa4e159999ef3acc82af2a3e`) on its default `feat/harness-backend` branch.
 Upstream history, MIT license and notices are retained. The public overview is [FORK.md](FORK.md); this file is the release log.
 
+## Active release: menu bar icon and setup panel colour
+
+- [x] Add Settings → Appearance → MENU BAR ICON (Monochrome default, Color), saved natively on the Mac with the lifecycle preferences and applied to the menu bar icon immediately. Pages reach it only through `starnet-connect://menu-bar-icon/monochrome|color`, handled by both the local and remote station windows; no other native authority is exposed.
+- [x] Make the setup ("GET ACQUAINTED") panel use the theme's opaque panel colour instead of a fixed teal-black `#080b0b`, so it matches the COMMS panel it covers. The rule was identical to upstream; the station had been parked at a pending setup question, so the overlay was permanently visible.
+- [ ] Rebuild and install the Mac app and server release; verify the icon, the setting and the panel colour.
+
+## Next release (queued): agent-editable station configuration
+
+Lev wants nearly everything — settings, rooms, maps and layouts — editable by agents through configuration or an equally simple surface, with every change visible and backed up. Upstream has moved 867 commits past this fork's v0.12.3 base and now ships a `station.layout` agent tool for floor edits, so the first step is merging current upstream rather than building a parallel layout editor. Placed objects are capability grants, so agent layout/permission edits must keep consent and remain auditable. Plan: merge upstream; expose a validated settings get/set tool with a change history visible in Settings; snapshot the station (the existing STATION BACKUP export, secrets excluded) before each agent-applied change with one-step restore; document the configuration surface for agents.
+
 ## Active release: Gateway settings section and public fork
 
 - [x] Move the private model gateway out of Providers / API Keys into its own Settings → Gateway section, keeping its select, add-key, update, backups and remove controls.

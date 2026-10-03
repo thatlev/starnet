@@ -373,12 +373,16 @@ fn show_remote_window(app: &AppHandle, port: u16) -> Result<(), String> {
             .inner_size(1280.0, 832.0)
             .min_inner_size(960.0, 600.0)
             .center()
-            .initialization_script(remote_initialization(port))
+            .initialization_script(format!("{}{}", remote_initialization(port), crate::menu_bar_init_script(app)))
             .on_navigation(move |url| {
                 // The remote document can open the isolated chooser, but cannot
                 // perform local setup/admin actions or invoke native commands.
                 if matches!(url.as_str(), "starnet-connect://setup" | "starnet-connect://setup/") {
                     show_setup(navigation.clone());
+                    return false;
+                }
+                // A Mac-side appearance choice only: saved natively, no other native authority.
+                if crate::handle_menu_bar_navigation(&navigation, url) {
                     return false;
                 }
                 url.scheme() == "http"

@@ -4,12 +4,21 @@ use std::path::{Path, PathBuf};
 
 const VERSION: u32 = 1;
 
+fn default_menu_bar_icon_monochrome() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LifecyclePreferences {
     pub(crate) version: u32,
     pub(crate) start_minimized: bool,
     pub(crate) close_to_tray: bool,
+    /// macOS menu bar icon: a monochrome template that follows the light/dark menu bar (default), or the
+    /// colour app icon. Added within version 1, so earlier files without the field read as monochrome and
+    /// earlier builds ignore it.
+    #[serde(default = "default_menu_bar_icon_monochrome")]
+    pub(crate) menu_bar_icon_monochrome: bool,
 }
 
 impl Default for LifecyclePreferences {
@@ -18,6 +27,7 @@ impl Default for LifecyclePreferences {
             version: VERSION,
             start_minimized: false,
             close_to_tray: false,
+            menu_bar_icon_monochrome: true,
         }
     }
 }
@@ -152,9 +162,26 @@ mod tests {
             version: VERSION,
             start_minimized: true,
             close_to_tray: true,
+            menu_bar_icon_monochrome: false,
         };
         save_verified(&path, &expected).unwrap();
         assert_eq!(load(&path), expected);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn earlier_files_default_to_a_monochrome_menu_bar_icon() {
+        let dir = temp_dir("menubar");
+        let path = dir.join("lifecycle.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &path,
+            br#"{"version":1,"startMinimized":false,"closeToTray":true}"#,
+        )
+        .unwrap();
+        let loaded = load(&path);
+        assert!(loaded.close_to_tray);
+        assert!(loaded.menu_bar_icon_monochrome);
         let _ = std::fs::remove_dir_all(dir);
     }
 

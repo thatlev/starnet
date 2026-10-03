@@ -3,8 +3,9 @@
 .ov-journey li { display:flex; align-items:center; gap:9px; }
 .ov-journey b { color:var(--ph); font-size:12px; letter-spacing:1px; }
 .fnv-dialogue { background:linear-gradient(155deg, var(--panel2), var(--panel)); border-left:1px solid var(--ph-dim); padding:22px; gap:14px; overflow-y:auto; }
-/* The conversation needs a solid reading surface over the underlying transcript. */
-.fnv-dialogue::before { content:''; position:absolute; inset:0; background:#080b0b; z-index:-1; }
+/* The conversation needs a solid reading surface over the underlying transcript. Use the theme's opaque panel
+   colour, not a fixed teal-black, so the setup panel matches the COMMS panel it covers in every theme. */
+.fnv-dialogue::before { content:''; position:absolute; inset:0; background:var(--panel2); z-index:-1; }
 .fnv-stage { flex:none; color:var(--ph-dim); font-size:12px; letter-spacing:1.2px; line-height:1.5; text-transform:uppercase; }
 .fnv-stage[hidden] { display:none; }
 .fnv-speaker { color:var(--ph-bright); font-size:22px; letter-spacing:1px; padding-bottom:12px; }
