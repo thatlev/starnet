@@ -3,6 +3,23 @@
 Public, unofficial fork of androoAGI/starnet, updated through v0.12.3 (`3ba5b84922f3b62caa4e159999ef3acc82af2a3e`) on its default `feat/harness-backend` branch.
 Upstream history, MIT license and notices are retained. The public overview is [FORK.md](FORK.md); this file is the release log.
 
+## Active release: Claude Code connection and stacked sign-ins
+
+Lev asked on 2026-10-05 for a Claude connection with the correct icon, working end to end, and for every connection to support more than one provider without being signed out.
+
+- [x] Port upstream's Claude Code provider (`claude-cli`) and SIGN IN WITH CLAUDE: 22 feature commits cherry-picked from `androoAGI/starnet` (`3d032f64a` through `ac98203c2`), plus the cut-off tool-call refusal they rely on (`3d757a919`). Conflicts only touched this fork's Gateway entries, the aligned narrow provider layout and test lists; both sides were kept. The ported provider, sign-in, account and sign-in-engine files are byte-identical to upstream.
+- [x] Port subscription stacking: ChatGPT, Grok, Kimi and Claude Code can each hold several accounts (＋ ADD ACCOUNT, per-account SIGN IN/REMOVE); a run that hits one account's usage limit continues on the next.
+- [x] Use the official Claude mark (lobe-icons 1.95.0, MIT, recorded in `sources.json`) instead of upstream's generic terminal glyph, and list CLAUDE CODE with the other subscription sign-ins.
+- [x] Give the Claude Code CLI a station-secret-free environment: upstream's `child-env.js`, wired to this fork's held credentials (runtime keys and pools, channel tokens, ChatGPT/Grok/Kimi and extra-account tokens, service keys, registry key variables).
+- [x] Audit sign-out risks. Each sign-in has its own store, every refresh path is single-flight (two runs cannot spend one rotating refresh token), StarNet never imports another client's tokens, and only DISCONNECT/REMOVE log out. Fixed the API KEYS hint that assumed ChatGPT was the only sign-in.
+- [x] LevServer: upgraded `claude-code` 2.1.223 → 2.1.285 (upstream's sign-in flow was proven on 2.1.284); confirmed every CLI flag the provider uses, and that the `starnet` account keeps its own Claude login in `/srv/private/starnet/.claude/`. Raised the unit to 1.5 GiB MemoryHigh / 2 GiB MemoryMax because one Claude Code process uses about 220 MB before any work.
+- [ ] Rebuild and install the Mac app and server release; remove superseded builds.
+- [ ] Lev signs in to Claude on the station (Settings → Providers → CLAUDE CODE → SIGN IN, then paste the code the page shows).
+
+Verification: 73 Claude provider, 22 login, 11 sign-in engine and 17 text-protocol assertions; 16 account-store, 20 Claude stacking and 23 ChatGPT/Grok/Kimi stacking assertions; 27 cut-off-call and 42 sanitizer assertions; 66 ChatGPT, 148 registry and 29 credential-rotation assertions; all 37 remote tests and the 21-step remote regression list; 55 native tests. All 829 fast-list tests ran individually: 19 fail identically on the untouched base `2b52ea560` (including the existing missing `test/native-startup.test.js` list entry, `settings-save-failure` and the claims ledger), and the determinism lint keeps its 4 existing problems. A seeded local station showed the CLAUDE CODE card after Kimi with the Claude mark, the Mac's real `claude auth status` (SIGNED IN · MAX) and ＋ ADD ACCOUNT at desktop and 420px widths.
+
+Incident: LevServer reset uncleanly at about 07:05 during this work (journal ends without a shutdown; no panic, OOM or service fault logged; SSH from the Mac also reported the network unreachable). It booted with the private vault locked, as designed; the vault was unlocked and the station returned before installation.
+
 ## Active release: aligned provider actions
 
 - [x] Give LINK STATION, ADD KEY and SIGN IN a shared action width and consistent edges at wide and narrow pane sizes, without changing their behavior.
