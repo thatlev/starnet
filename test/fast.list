@@ -843,3 +843,5 @@ test/loop.truncated-args-refuse.test.js
 test/account-choice.test.js
 test/static-assets.test.js
 test/open-external.test.js
+test/provider-order.test.js
+test/claude-signin-box.test.js

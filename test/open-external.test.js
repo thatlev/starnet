@@ -108,3 +108,19 @@ test('station images load at most three at a time and always free their slot', (
   assert.equal(timers[1].cleared, true, 'a finished image cancels its watchdog');
   assert.deepEqual(Object.values(images[1].listeners).flat(), [], 'listeners are removed after release');
 });
+
+test('character sprites go ahead of queued room textures', () => {
+  const context = { window: {}, console, setTimeout: () => 0, clearTimeout: () => {} };
+  vm.runInNewContext(source + '\n;this.U = U;', context);
+  const U = context.U;
+  const make = () => { const ls = {}; const img = { srcSet: null, addEventListener: (e, f) => { (ls[e] = ls[e] || []).push(f); }, removeEventListener: (e, f) => { ls[e] = (ls[e] || []).filter(x => x !== f); }, fire: e => (ls[e] || []).slice().forEach(f => f()) }; Object.defineProperty(img, 'src', { set(v) { img.srcSet = v; } }); return img; };
+  const rooms = Array.from({ length: 5 }, make), sprite = make();
+  rooms.forEach((img, i) => U.setAssetImage(img, 'assets/industrial/r' + i + '.png'));
+  U.setAssetImage(sprite, 'assets/sprites/bear/rot_south.png', true);
+  assert.equal(sprite.srcSet, null, 'every slot is busy');
+  rooms[0].fire('load');
+  assert.equal(sprite.srcSet, 'assets/sprites/bear/rot_south.png', 'the sprite takes the first free slot');
+  assert.equal(rooms[3].srcSet, null, 'queued room textures wait behind it');
+  rooms[1].fire('load');
+  assert.equal(rooms[3].srcSet, 'assets/industrial/r3.png');
+});

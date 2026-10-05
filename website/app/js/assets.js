@@ -673,8 +673,9 @@ const SPRITES = (() => {
       const img = new Image();
       img.onload = () => res(img);
       img.onerror = () => res(null);
-      // release-pinned and loaded a few at a time, so the station's API calls are never queued behind the sprites
-      if (typeof U !== 'undefined' && U.setAssetImage) U.setAssetImage(img, path); else img.src = path;
+      // release-pinned and loaded a few at a time, so the station's API calls are never queued behind them; the crew's
+      // sprites go ahead of the room's textures (util.js)
+      if (typeof U !== 'undefined' && U.setAssetImage) U.setAssetImage(img, path, true); else img.src = path;
     });
   }
 

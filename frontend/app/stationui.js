@@ -1177,7 +1177,10 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       // Account content is asynchronous. Replacing a tall result with its short loading
       // placeholder clamps scrollTop before it can be restored, even within one frame.
       const creditHeight = swap === false ? body.querySelector('#credits-store')?.offsetHeight : 0;
-      const disclosures = swap === false ? Array.from(body.querySelectorAll('details, .key-edit[id]'), el => ({ path: ctrlPath(el), hidden: el.hidden, open: el.open })) : [];
+      // Editors the Commander opened stay open across a background repaint. A box whose visibility the render itself
+      // decides ([data-render-owned]: the Claude sign-in box) is left as drawn: restoring it re-hid the paste-the-code
+      // box that the sign-in had just shown.
+      const disclosures = swap === false ? Array.from(body.querySelectorAll('details, .key-edit[id]:not([data-render-owned])'), el => ({ path: ctrlPath(el), hidden: el.hidden, open: el.open })) : [];
       body.classList.toggle('term-live-refresh', swap === false);
       builder(body);
       const creditHost = body.querySelector('#credits-store');
@@ -4298,6 +4301,14 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   function visibleProviders() {
     return PROVIDERS.filter(p => !p.credits || creditsProv.state !== 'absent');
   }
+  // CLAUDE CODE is the SECOND card on every station (Lev, 2026-10-05): after STARNET MANAGED where a credits cloud is
+  // configured, otherwise after OPENROUTER. A fixed slot in PROVIDERS made it the first card wherever STARNET is absent.
+  function claudeSecond(list) {
+    const i = list.findIndex(p => p.id === 'claude-cli');
+    if (i < 0 || list.length < 2) return list;
+    const rest = list.slice(0, i).concat(list.slice(i + 1));
+    return rest.slice(0, 1).concat([list[i]], rest.slice(1));
+  }
   // The private model gateway is the station's own infrastructure, not one more model vendor. It owns the
   // SETTINGS ▸ GATEWAY section; PROVIDERS and API KEYS list only model services. scope: 'gateway' | 'models' |
   // undefined (everything — the health repaint matches cards across both sections by data-provider).
@@ -4575,7 +4586,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   // The sign-in box (open page · cancel · paste a code). ONE flow runs at a time, so ONE box is ever on the page:
   // under the card for the default sign-in, inside the accounts block for an extra account.
   function claudeFlowBoxHtml(flowing, show, dismissable) {
-    return '<div class="key-edit codex-inline prov-oauth-inline prov-claude-inline" id="prov-claude-inline"' + (show ? '' : ' hidden') + '>' +
+    return '<div class="key-edit codex-inline prov-oauth-inline prov-claude-inline" id="prov-claude-inline" data-render-owned' + (show ? '' : ' hidden') + '>' +
       '<span class="prov-signin-msg" id="prov-claude-status" role="status" aria-live="polite">' + esc(claudeCard.msg) + '</span>' +
       (flowing
         ? '<span class="prov-signin-code">' +
@@ -4820,7 +4831,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
 
   function providersHtml(scope) {
     const active = activeProv();
-    return visibleProviders().filter(p => providerInScope(p.id, scope)).map((p, pi) => {
+    return claudeSecond(visibleProviders().filter(p => providerInScope(p.id, scope))).map((p, pi) => {
       // The credits provider has its own card: no key to paste, no sign-in, and a status line that
       // states the BALANCE, because a paid provider reading "connected" at $0.00 would be a lie of
       // exactly the kind this panel exists to avoid.
