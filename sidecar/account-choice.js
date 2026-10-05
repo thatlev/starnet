@@ -35,9 +35,9 @@ const LIMIT_REST_MS = 60 * 60 * 1000;   // a spent account with no stated reset 
 const MAX_ENTRIES = 64;
 const MAX_WINDOWS = 6;
 
-/* Approximate published allowances relative to each provider's base paid plan (Claude Pro, ChatGPT Plus), checked
-   2026-10-05. Providers report the plan family only ("max", "pro"), not the tier inside it, so Max and Pro count
-   as their smallest tier (5×). The size only weighs usage left between accounts of ONE provider. */
+/* Rough relative allowances against each provider's base paid plan (Claude Pro, ChatGPT Plus) — estimates, not
+   published figures. Providers report the plan family only ("max", "pro"), not the tier inside it, so Claude Max
+   counts as its smallest tier (5×). The size only weighs usage left between accounts of ONE provider. */
 const PLAN_SIZE = Object.freeze({
   'claude-cli': Object.freeze({ free: 0, pro: 1, team: 1.25, enterprise: 1.25, max: 5 }),
   codex: Object.freeze({ free: 0.2, go: 0.5, plus: 1, team: 1, business: 1, edu: 1, enterprise: 1, pro: 5 })
