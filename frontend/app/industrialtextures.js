@@ -74,7 +74,8 @@ const IndustrialTextures = (() => {
     };
     img.onerror = () => { failed.push(name); resolve(); };
     const file = 'assets/industrial/' + name + '.png';
-    img.src = (typeof U !== 'undefined' && U.assetUrl) ? U.assetUrl(file) : file;   // release-pinned, cacheable (util.js)
+    // release-pinned and loaded a few at a time, so the station's API calls are never queued behind the art (util.js)
+    if (typeof U !== 'undefined' && U.setAssetImage) U.setAssetImage(img, file); else img.src = file;
   }))).then(() => {
     // Optional material failures fall back per material, without disabling the station pack.
     loaded = !failed.some(name => names.includes(name));

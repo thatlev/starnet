@@ -1,6 +1,6 @@
 'use strict';
 // node --test test/open-external.test.js — U.openExternal (sign-in pages reach the Mac browser in every shell) and
-// U.assetUrl (release-pinned image URLs).
+// U.assetUrl (release-pinned image URLs) and the image slots that keep art from queueing the station API behind it.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -78,4 +78,33 @@ test('asset URLs carry the release token only on an installed station', () => {
   assert.equal(U.assetUrl('app/app.js'), 'app/app.js');
   assert.equal(U.assetUrl('https://example.com/assets/x.png'), 'https://example.com/assets/x.png');
   assert.equal(U.assetUrl(null), null);
+});
+
+test('station images load at most three at a time and always free their slot', () => {
+  const timers = [];
+  const context = { window: { __STARNET_ASSET_V__: 'v1' }, console, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: id => { if (timers[id - 1]) timers[id - 1].cleared = true; } };
+  vm.runInNewContext(source + '\n;this.U = U;', context);
+  const U = context.U;
+  const images = Array.from({ length: 6 }, () => {
+    const listeners = {};
+    const img = { srcSet: null, addEventListener: (ev, fn) => { (listeners[ev] = listeners[ev] || []).push(fn); },
+      removeEventListener: (ev, fn) => { listeners[ev] = (listeners[ev] || []).filter(f => f !== fn); },
+      fire: ev => { for (const fn of (listeners[ev] || []).slice()) fn(); }, listeners };
+    Object.defineProperty(img, 'src', { set(v) { img.srcSet = v; }, get() { return img.srcSet; } });
+    return img;
+  });
+  images.forEach((img, i) => U.setAssetImage(img, 'assets/industrial/t' + i + '.png'));
+  assert.deepEqual(images.map(img => img.srcSet), ['assets/industrial/t0.png?v=v1', 'assets/industrial/t1.png?v=v1', 'assets/industrial/t2.png?v=v1', null, null, null]);
+  images[1].fire('load');
+  assert.equal(images[3].srcSet, 'assets/industrial/t3.png?v=v1', 'a loaded image hands its slot to the next');
+  images[1].fire('load');
+  assert.equal(images[4].srcSet, null, 'a slot is released once');
+  images[0].fire('error');
+  assert.equal(images[4].srcSet, 'assets/industrial/t4.png?v=v1', 'a failed image frees its slot too');
+  const stalled = timers[2];
+  assert.equal(stalled.ms, 60000);
+  stalled.fn();
+  assert.equal(images[5].srcSet, 'assets/industrial/t5.png?v=v1', 'a stalled image frees its slot after a minute');
+  assert.equal(timers[1].cleared, true, 'a finished image cancels its watchdog');
+  assert.deepEqual(Object.values(images[1].listeners).flat(), [], 'listeners are removed after release');
 });

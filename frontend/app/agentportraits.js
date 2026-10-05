@@ -23,7 +23,7 @@ const AgentPortraits = (() => {
       };
       source.onerror = () => { cache.delete(set); resolve(null); };
       const file = 'assets/sprites/' + set + '/rot_south.png';
-      source.src = (typeof U !== 'undefined' && U.assetUrl) ? U.assetUrl(file) : file;   // release-pinned, cacheable (util.js)
+      if (typeof U !== 'undefined' && U.setAssetImage) U.setAssetImage(source, file); else source.src = file;   // pinned, a few at a time (util.js)
     });
     cache.set(set, promise); return promise;
   }

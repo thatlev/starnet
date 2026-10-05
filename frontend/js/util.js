@@ -116,6 +116,36 @@ const U = {
       ? file + '?v=' + encodeURIComponent(version) : file;
   },
 
+  /* Station art shares the page's connections with its API calls and live feed: WebKit opens at most six per host
+     and serves them in request order. A launch without cached art asked for ~420 large images at once, and every
+     API call and the event stream waited behind them (on a slow link, minutes of LINK DOWN before the station
+     answered). Station images therefore load through at most three connections at a time; an image from the cache
+     frees its slot at once. setAssetImage(img, file) replaces img.src = file (pinned by assetUrl) and keeps the
+     loader's own onload/onerror. A slot is also freed after a minute, so a stalled image never blocks the rest. */
+  _imageSlots: 3, _imagesActive: 0, _imagesWaiting: [],
+  setImageSource(img, src) {
+    const start = () => {
+      U._imagesActive++;
+      let released = false, timer = null;
+      const release = () => {
+        if (released) return;
+        released = true;
+        if (timer) clearTimeout(timer);
+        img.removeEventListener('load', release);
+        img.removeEventListener('error', release);
+        U._imagesActive--;
+        const next = U._imagesWaiting.shift();
+        if (next) next();
+      };
+      img.addEventListener('load', release);
+      img.addEventListener('error', release);
+      timer = setTimeout(release, 60000);
+      try { img.src = src; } catch (_) { release(); }
+    };
+    if (U._imagesActive < U._imageSlots) start(); else U._imagesWaiting.push(start);
+  },
+  setAssetImage(img, file) { U.setImageSource(img, U.assetUrl(file)); },
+
   /* THE ONE WAY to open a web page in the user's own browser (sign-in pages, guides, purchase pages).
      • Local desktop app: the native open_external_url command, a real success or failure.
      • Remote desktop app (no command bridge; the window sets __STARNET_OPEN_EXTERNAL__): a

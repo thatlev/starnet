@@ -673,7 +673,8 @@ const SPRITES = (() => {
       const img = new Image();
       img.onload = () => res(img);
       img.onerror = () => res(null);
-      img.src = (typeof U !== 'undefined' && U.assetUrl) ? U.assetUrl(path) : path;   // release-pinned, cacheable (util.js)
+      // release-pinned and loaded a few at a time, so the station's API calls are never queued behind the sprites
+      if (typeof U !== 'undefined' && U.setAssetImage) U.setAssetImage(img, path); else img.src = path;
     });
   }
 

@@ -29,7 +29,9 @@ pre=0
 facts=$(ssh "${ssh_opts[@]}" "$host" sudo -n bash -s -- "$rev" <<'REMOTE'
 set -euo pipefail
 rev=$1
-exec_line=$(systemctl cat starnet-remote.service 2>/dev/null | grep -m1 '^ExecStart=') || { echo 'ERROR no starnet-remote.service on this server'; exit 1; }
+# read the unit first: grep -m1 inside a pipefail pipeline can SIGPIPE systemctl while it still writes a drop-in
+unit=$(systemctl cat starnet-remote.service 2>/dev/null) || { echo 'ERROR no starnet-remote.service on this server'; exit 1; }
+exec_line=$(grep -m1 '^ExecStart=' <<<"$unit") || { echo 'ERROR the starnet-remote.service unit has no ExecStart'; exit 1; }
 owner=$(sed -n 's/.*--owner \([0-9][0-9]*\).*/\1/p' <<<"$exec_line")
 data=$(sed -n 's/.*--data \([^ ]*\).*/\1/p' <<<"$exec_line")
 [[ -n "$owner" && -n "$data" ]] || { echo 'ERROR could not read the owner and data directory from the service'; exit 1; }
@@ -122,7 +124,8 @@ rm -rf "$work" "$upload"
 echo "INSTALLED $rev"
 rm -f "$0"
 REMOTE
-since=$(ssh "${ssh_opts[@]}" "$host" date '+%Y-%m-%d %H:%M:%S')
+# one quoted command string: ssh joins its arguments with spaces, which split an unquoted format in two
+since=$(ssh "${ssh_opts[@]}" "$host" "date '+%Y-%m-%d %H:%M:%S'")
 ssh "${ssh_opts[@]}" "$host" sudo -n systemd-run --quiet --collect --unit="$unit" /bin/bash "$script" "$rev" "$owner" "$data" "$upload"
 state=active
 for _ in $(seq 1 240); do

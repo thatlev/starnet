@@ -23,8 +23,10 @@ const PropRemaster = (() => {
   // Match the camera's 6x close-zoom limit. A 4x staging canvas softened even
   // full-resolution sources before they reached the final CRT pass.
   const ROOT = 'assets/industrial/'+(draftReview?'props-v2/':projectionReview?'projection-correction/':'approved-sheet/'), DENSITY = projectionReview ? 6 : 4, entries = new Map(), failures = [];
-  // pinned to the station's release so an installed station's artwork comes from the browser cache (util.js)
+  // pinned to the station's release so an installed station's artwork comes from the browser cache, and loaded a
+  // few at a time so the station's API calls are never queued behind it (util.js)
   const assetUrl = file => (typeof U !== 'undefined' && U.assetUrl) ? U.assetUrl(file) : file;
+  const setArt = (im, file) => { if (typeof U !== 'undefined' && U.setAssetImage) U.setAssetImage(im, file); else im.src = file; };
   let revision = 0, pixelBudget = 0;
   const MAX_PIXELS = 12 * 1024 * 1024;
   let measuredGeometry={};
@@ -70,7 +72,7 @@ const PropRemaster = (() => {
   function image(file) {
     return new Promise((resolve,reject) => {
       const im=new Image();
-      im.onload=()=>resolve(im); im.onerror=()=>reject(Error('asset unavailable: '+file)); im.src=assetUrl(ROOT+file);
+      im.onload=()=>resolve(im); im.onerror=()=>reject(Error('asset unavailable: '+file)); setArt(im,ROOT+file);
     });
   }
   function fit(bounds, crop, contact, sourceHeight) {
