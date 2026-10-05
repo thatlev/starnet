@@ -513,7 +513,7 @@
       credentialPool: false,
       supportsTools: true,
       supportsReasoning: true,
-      order: 58
+      order: 13
     },
     {
       id: 'ollama',

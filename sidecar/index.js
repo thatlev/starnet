@@ -130,6 +130,7 @@ const { effectiveModel: resolveEffectiveModel, effectiveUsd, effectiveRunUsd } =
 const { makeEmitter } = require('../shared/emitter.js');
 const { redact, renderRecall, injectRecall, rank, makeContext, compactionMemoryBlock, compactionSummaryPrompt } = require('./context.js');
 const { makeSummarizer } = require('./compaction-summarizer.js');   // chunked context-compaction fold (Lane A)
+const { setStationSecretSource } = require('./child-env.js');   // station-secret-free env for helper processes
 const { runRouteFailure } = require('./runroute.js');   // a failure escaping handleRun must never read as an empty 200
 const { json: respondJson, readJsonBody, isAgentId } = require('./respond.js');   // canonical json()/body/agent-id helpers — adopt incrementally, don't mass-migrate
 const { readBody, readBodyBuffer } = require('./http-body.js');
@@ -4292,6 +4293,29 @@ let serviceKeys = loadServiceKeys();
 let serviceKeysOwnedEnv = {};   // env vars WE set (the applyEnv clobber guard) — rebuilt on every apply
 function applyServiceKeysEnv() { serviceKeysOwnedEnv = serviceKeysMod.applyEnv(serviceKeys, process.env, serviceKeysOwnedEnv, { reservedEnv: SERVICEKEYS_RESERVED_ENV }); }
 applyServiceKeysEnv();          // boot: persisted keys are live for the first run without any UI touch
+// Helper processes (the Claude Code CLI first) get a station-secret-free env (child-env.js): STARNET_/SKYNET_ names,
+// the service-key names this sidecar exported, and any variable whose value is a credential the station holds now.
+function stationHeldSecretValues() {
+  const out = new Set();
+  const SECRET_FIELD = /token|key|secret|password|credential/i;
+  function add(v) { if (typeof v === 'string' && v.trim().length >= 8) out.add(v.trim()); }
+  function walk(v, depth, field) {
+    if (v == null || depth > 4) return;
+    if (typeof v === 'string') { if (field === null || SECRET_FIELD.test(field)) add(v); return; }
+    if (Array.isArray(v)) { for (const x of v) walk(x, depth + 1, field); return; }
+    if (typeof v === 'object') for (const k of Object.keys(v)) walk(v[k], depth + 1, field === null ? null : k);
+  }
+  add(runtimeKey); add(CREDITS_TOKEN); add(API_TOKEN);
+  walk(runtimeKeys, 0, null); walk(runtimeKeyPools, 0, null); walk(channelTokenRuntime, 0, null);
+  walk(channelSecrets, 0, null); walk(serviceKeys, 0, null); walk(codexTokens, 0, '');
+  for (const id of Object.keys(oauthProviders || {})) walk(oauthProviders[id] && oauthProviders[id].tokens, 0, '');
+  for (const entry of oauthAccountEntries.values()) walk(entry && entry.tokens, 0, '');
+  for (const profile of listProviderProfiles({ includeInactive: true, public: false })) {
+    for (const name of (profile && profile.keyEnv) || []) add(process.env[name]);
+  }
+  return out;
+}
+setStationSecretSource({ names: () => Object.keys(serviceKeysOwnedEnv || {}), values: stationHeldSecretValues });
 // Verified persist (secret-durability law): ok ONLY when a read-back proves the write reached disk. On
 // ok:false the in-memory list stays live but the route reports the failure — never a false "saved".
 function saveServiceKeys() {

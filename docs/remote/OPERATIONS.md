@@ -24,7 +24,11 @@ GitHub CLI's OAuth app is the sign-in application in this version. The gateway v
 
 The gateway and runtime bind only to Linux loopback. SSH supplies encryption and host authentication. The local browser proxy validates Host/Origin, and runtime mutation requests still require the per-launch API token from authenticated station HTML. Credentials are not embedded in the app, repository, URL, saved station or logs.
 
-The dedicated Linux account cannot write to application releases, other users' homes or unrelated service directories. Its systemd unit has no capabilities or display/device access, uses private temporary storage and has no swap allowance. Default limits are 768 MiB MemoryHigh, 1 GiB MemoryMax, 256 tasks and three concurrent admitted agents. These are resource limits for this shared server, not a guarantee that every future build fits them. Place projects under the station's private data directory. New workspace grants, tool permissions and model quotas still apply.
+The dedicated Linux account cannot write to application releases, other users' homes or unrelated service directories. Its systemd unit has no capabilities or display/device access, uses private temporary storage and has no swap allowance. Default limits are 1.5 GiB MemoryHigh, 2 GiB MemoryMax, 256 tasks and three concurrent admitted agents. The limits leave room for one Claude Code CLI process (about 220 MB before any work) per concurrently running Claude agent. These are resource limits for this shared server, not a guarantee that every future build fits them. Place projects under the station's private data directory. New workspace grants, tool permissions and model quotas still apply.
+
+Subscription sign-ins persist on the server and are independent of one another, so ChatGPT, Grok, Kimi and Claude Code can all stay connected at once. Each provider can also hold more than one account (Settings → Providers → ＋ ADD ACCOUNT); when the account a run is on reaches its usage limit, the run continues on the next one. Every sign-in has its own token store and one in-flight refresh at a time, so concurrent runs cannot spend the same rotating refresh token. A sign-in is removed only by DISCONNECT or REMOVE. A device-code sign-in StarNet creates is its own grant; it does not share or consume the tokens of a Codex, Grok or Kimi CLI used elsewhere with the same account.
+
+Claude Code runs through the server's own `claude` CLI (the `claude-code` package, found on the service PATH). Settings → Providers → CLAUDE CODE → SIGN IN starts `claude auth login` as the `starnet` account. The page it opens cannot call back to the server, so paste the code it shows into the card. The CLI keeps that credential in the service account's home, `/srv/private/starnet/.claude/`; StarNet only reads `claude auth status`. Extra Claude accounts keep their own CLI configuration under `workspaces/.secrets/accounts/`. Each turn starts one `claude -p` process with every Claude Code tool, MCP server, setting source and auto-memory disabled, and a child environment stripped of station tokens and held provider keys; StarNet's own tools and consent gates apply. Keep the package current with the server's normal `apt` upgrades.
 
 The LevServer model key allows the gateway's subscription models and preserves a 1% account reserve. The gateway model catalogue is authoritative; no static model list is substituted after a failed lookup. Responses requests preserve `max` and `ultra` reasoning settings.
 
@@ -39,6 +43,8 @@ The LevServer model key allows the gateway's subscription models and preserves a
 | Runtime data | `/srv/private/starnet/workspaces/` |
 | Server-held model key | `/srv/private/starnet/provider.env` (root-only) |
 | Remote provider settings | `/srv/private/starnet/workspaces/.secrets/remote-providers.json` (starnet-only) |
+| Subscription sign-ins (ChatGPT, Grok, Kimi) and extra accounts | `/srv/private/starnet/workspaces/` (starnet-only) |
+| Claude Code sign-in | `/srv/private/starnet/.claude/` (the CLI's own store, starnet-only) |
 | systemd service | `starnet-remote.service` |
 | Linux gateway / runtime | `127.0.0.1:18791` / `127.0.0.1:18792` |
 | Mac viewer | Existing connection: `http://127.0.0.1:8790`; new stations use separate saved loopback ports |

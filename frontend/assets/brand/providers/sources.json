@@ -13,6 +13,10 @@
       "url": "https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/cerebras.svg"
     },
     {
+      "name": "claude-cli",
+      "url": "https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/claude.svg"
+    },
+    {
       "name": "deepseek",
       "url": "https://unpkg.com/@lobehub/icons-static-svg@1.95.0/icons/deepseek.svg"
     },
