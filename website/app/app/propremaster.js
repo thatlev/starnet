@@ -23,6 +23,8 @@ const PropRemaster = (() => {
   // Match the camera's 6x close-zoom limit. A 4x staging canvas softened even
   // full-resolution sources before they reached the final CRT pass.
   const ROOT = 'assets/industrial/'+(draftReview?'props-v2/':projectionReview?'projection-correction/':'approved-sheet/'), DENSITY = projectionReview ? 6 : 4, entries = new Map(), failures = [];
+  // pinned to the station's release so an installed station's artwork comes from the browser cache (util.js)
+  const assetUrl = file => (typeof U !== 'undefined' && U.assetUrl) ? U.assetUrl(file) : file;
   let revision = 0, pixelBudget = 0;
   const MAX_PIXELS = 12 * 1024 * 1024;
   let measuredGeometry={};
@@ -68,7 +70,7 @@ const PropRemaster = (() => {
   function image(file) {
     return new Promise((resolve,reject) => {
       const im=new Image();
-      im.onload=()=>resolve(im); im.onerror=()=>reject(Error('asset unavailable: '+file)); im.src=ROOT+file;
+      im.onload=()=>resolve(im); im.onerror=()=>reject(Error('asset unavailable: '+file)); im.src=assetUrl(ROOT+file);
     });
   }
   function fit(bounds, crop, contact, sourceHeight) {
@@ -353,10 +355,10 @@ const PropRemaster = (() => {
     try{
       // Classic avoids all optional asset traffic and remains independently runnable.
       if(typeof location!=='undefined' && new URLSearchParams(location.search||'').get('textures')==='classic')return;
-      const response=await fetch(ROOT+'manifest.json');if(!response.ok)throw Error('manifest unavailable');
+      const response=await fetch(assetUrl(ROOT+'manifest.json'));if(!response.ok)throw Error('manifest unavailable');
       const manifest=await response.json();
       if(!manifest||manifest.version!==1||!manifest.props||typeof manifest.props!=='object')throw Error('invalid manifest');
-      if(projectionReview)try{const geometry=await fetch(ROOT+'runtime-geometry.json');if(geometry.ok){const data=await geometry.json();if(data.version===1&&data.views)measuredGeometry=data.views;}}catch(_){} // older packs retain measured-at-load fallback
+      if(projectionReview)try{const geometry=await fetch(assetUrl(ROOT+'runtime-geometry.json'));if(geometry.ok){const data=await geometry.json();if(data.version===1&&data.views)measuredGeometry=data.views;}}catch(_){} // older packs retain measured-at-load fallback
       const queue=[];
       for(const [id,p]of Object.entries(manifest.props)){
         if(!/^[A-Za-z0-9_]+$/.test(id)||!p||!p.views)continue;

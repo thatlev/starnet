@@ -102,3 +102,46 @@ test('viewer connection controls require same-origin custom-header requests and 
     assert.equal(disconnects, 1); assert.equal(reconnects, 1);
   } finally { release?.(); await close(client); }
 });
+
+test('both hops keep the static cache policy and compression, keep API replies uncached and the station page plain', async () => {
+  const seen = [];
+  const runtime = http.createServer((req, res) => {
+    seen.push({ url: req.url, encoding: req.headers['accept-encoding'] || '', etag: req.headers['if-none-match'] || '' });
+    if (req.url === '/') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end('<html><head><title>—</title></head></html>'); }
+    if (req.url.startsWith('/app/a.js')) {
+      if (req.headers['if-none-match'] === '"h-br"') { res.writeHead(304, { ETag: '"h-br"', 'Cache-Control': 'no-cache' }); return res.end(); }
+      const policy = req.url.includes('?v=h') ? 'public, max-age=31536000, immutable' : 'no-cache';
+      res.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': policy, ETag: '"h-br"', 'Content-Encoding': 'br', Vary: 'Accept-Encoding' });
+      return res.end(require('node:zlib').brotliCompressSync('ok'));
+    }
+    if (req.url.startsWith('/api/')) { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }); return res.end('{}'); }
+    res.writeHead(200, { 'Cache-Control': 'public, max-age=60' }); res.end('other');
+  });
+  const runtimePort = await listen(runtime);
+  const gateway = createGateway({ runtimePort, runtimeToken: 'private', ownerId: 42, verifyIdentity: async () => ({ id: 42, login: 'owner' }) });
+  const gatewayPort = await listen(gateway);
+  const session = await (await fetch('http://127.0.0.1:' + gatewayPort + '/remote/login', { method: 'POST', body: JSON.stringify({ githubToken: 'test' }) })).json();
+  const client = createClient({ gatewayPort, localPort: 8790, getSession: async () => session });
+  const port = await listen(client);
+  const get = (url, headers = {}) => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: url, headers: { 'accept-encoding': 'br, gzip', ...headers } }, res => {
+      const chunks = []; res.on('data', c => chunks.push(c)); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+    }).on('error', reject);
+  });
+  try {
+    const page = await get('/');
+    assert.equal(page.headers['cache-control'], 'no-store');
+    assert.match(page.body.toString(), /<title>—<\/title><script>window\.__STARNET_REMOTE__=true;/, 'the station page is rewritten intact');
+    assert.equal(seen[0].encoding, '', 'the station page is requested uncompressed');
+    const pinned = await get('/app/a.js?v=h');
+    assert.equal(pinned.headers['cache-control'], 'public, max-age=31536000, immutable');
+    assert.equal(pinned.headers['content-encoding'], 'br');
+    assert.equal(require('node:zlib').brotliDecompressSync(pinned.body).toString(), 'ok');
+    assert.equal(seen[1].encoding, 'br, gzip', 'the viewer\'s accepted encodings reach the station');
+    assert.equal((await get('/app/a.js')).headers['cache-control'], 'no-cache');
+    const revalidated = await get('/app/a.js', { 'if-none-match': '"h-br"' });
+    assert.equal(revalidated.status, 304); assert.equal(revalidated.headers['cache-control'], 'no-cache');
+    assert.equal((await get('/api/state')).headers['cache-control'], 'no-store', 'API replies are never cached');
+    assert.equal((await get('/other')).headers['cache-control'], 'no-store', 'only the two static policies pass');
+  } finally { await close(client); await close(gateway); await close(runtime); }
+});

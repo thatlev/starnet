@@ -105,6 +105,50 @@ const U = {
     return '#' + ((1 << 24) | (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b)).toString(16).slice(1);
   },
 
+  /* An image or data file under assets/, pinned to the station's release (window.__STARNET_ASSET_V__, set by an
+     installed station's page). The station serves a pinned file as cacheable until the next release, so a remote
+     station's textures load from the Mac's cache instead of crossing the connection on every launch. Without a
+     release (development, the website) the path is returned unchanged. */
+  assetUrl(file) {
+    let version = '';
+    try { version = window.__STARNET_ASSET_V__ || ''; } catch (_) {}
+    return version && typeof file === 'string' && /^assets\/[^?#]+$/.test(file)
+      ? file + '?v=' + encodeURIComponent(version) : file;
+  },
+
+  /* THE ONE WAY to open a web page in the user's own browser (sign-in pages, guides, purchase pages).
+     • Local desktop app: the native open_external_url command, a real success or failure.
+     • Remote desktop app (no command bridge; the window sets __STARNET_OPEN_EXTERNAL__): a
+       starnet-connect://open-external navigation that the Mac window hands to the default browser. A navigation is
+       never popup-blocked, so a sign-in link that arrives after a fetch still opens. An older app without the flag
+       keeps the window.open path below.
+     • Plain browser: window.open. Its null return means the popup was blocked; the opened tab loses its opener.
+     Resolves { opened, where: 'browser'|'popup', win } and never rejects. Only http(s) links open. */
+  openExternal(url, opts) {
+    const link = String(url || '').trim();
+    const result = (opened, where, win) => ({ opened, where, win: win || null });
+    if (!/^https?:\/\//i.test(link)) return Promise.resolve(result(false, 'browser'));
+    let invoke = null, native = false;
+    try {
+      invoke = (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke) || null;
+      native = window.__STARNET_NATIVE__ === true && window.__STARNET_OPEN_EXTERNAL__ === true;
+    } catch (_) {}
+    if (invoke) {
+      return Promise.resolve()
+        .then(() => invoke('open_external_url', { url: link }))
+        .then(() => result(true, 'browser'), () => result(false, 'browser'));
+    }
+    if (native) {
+      try { window.location.href = 'starnet-connect://open-external?url=' + encodeURIComponent(link); }
+      catch (_) { return Promise.resolve(result(false, 'browser')); }
+      return Promise.resolve(result(true, 'browser'));
+    }
+    let win = null;
+    try { win = window.open(link, (opts && opts.name) || '_blank', (opts && opts.features) || ''); } catch (_) {}
+    if (win) { try { win.opener = null; } catch (_) {} }
+    return Promise.resolve(result(!!win, 'popup', win));
+  },
+
   // tiny pub/sub
   bus: {
     _h: {},

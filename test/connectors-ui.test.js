@@ -213,9 +213,12 @@ function fakeStack(tools) {
   A.ok(/data-cc-act="via"/.test(station) && /data-via=/.test(station), 'url-less oauth entries with `via` get a live VIA jump button');
   A.ok(/scrollIntoView/.test(station) && /cc-jump/.test(station), 'the VIA jump scrolls to + flashes the aggregator card');
   A.ok(/\/api\/connectors\/oauth\/start/.test(station), 'sign-in kicks off the real OAuth flow (oauth/start)');
-  // the popup itself lives in the shared openSignIn helper, which stayed in stationui.js core (settings re-sign-in shares it)
+  // the popup itself lives in the shared U.openExternal (js/util.js), reached through stationui.js's openSignIn
+  // (settings re-sign-in shares it)
   const stationCore = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'app', 'stationui.js'), 'utf8');
-  A.ok(/openSignIn\(/.test(station) && /window\.open\(/.test(stationCore), 'sign-in opens the provider consent in a popup (via the shared openSignIn helper)');
+  const utilSource = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'js', 'util.js'), 'utf8');
+  A.ok(/openSignIn\(/.test(station) && /function openSignIn\(url\) \{\s*return U\.openExternal\(url, \{ name: 'starnet_oauth'/.test(stationCore) &&
+    /window\.open\(/.test(utilSource), 'sign-in opens the provider consent in a popup (via the shared openSignIn helper)');
   A.ok(/function preserveScroll\(update\)/.test(stationCore) && /\.term-body, \.con-pane/.test(stationCore),
     'shared async connector refreshes preserve the active pane scroll position');
   A.ok(/focus\(\{ preventScroll: true \}\)/.test(stationCore) && !/setTimeout\(restore, 80\)/.test(stationCore),

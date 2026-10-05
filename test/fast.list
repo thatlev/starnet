@@ -841,3 +841,5 @@ test/native-scene.test.js
 test/onboarding-audio.test.js
 test/loop.truncated-args-refuse.test.js
 test/account-choice.test.js
+test/static-assets.test.js
+test/open-external.test.js

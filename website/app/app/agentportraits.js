@@ -22,7 +22,8 @@ const AgentPortraits = (() => {
         resolve(out.toDataURL());
       };
       source.onerror = () => { cache.delete(set); resolve(null); };
-      source.src = 'assets/sprites/' + set + '/rot_south.png';
+      const file = 'assets/sprites/' + set + '/rot_south.png';
+      source.src = (typeof U !== 'undefined' && U.assetUrl) ? U.assetUrl(file) : file;   // release-pinned, cacheable (util.js)
     });
     cache.set(set, promise); return promise;
   }

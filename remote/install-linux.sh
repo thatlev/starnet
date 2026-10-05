@@ -34,6 +34,8 @@ install -d -m 0755 "$release"
 cp -R "$source_root/sidecar" "$source_root/shared" "$source_root/frontend" "$source_root/remote" "$release/"
 printf '%s\n' "$release_id" > "$release/RELEASE"
 cp "$source_root/package.json" "$source_root/LICENSE" "$source_root/NOTICE.md" "$release/"
+# The verified per-file checksums: the station derives its image cache token from the frontend/assets entries.
+if [[ -f "$source_root/PACKAGE-SHA256.json" ]]; then cp "$source_root/PACKAGE-SHA256.json" "$release/"; fi
 if [[ -f "$source_root/PACKAGE-SHA256.json" && -x "$packaged_node" ]]; then
   node_path="$release/remote/runtimes/$runtime_name"
 else

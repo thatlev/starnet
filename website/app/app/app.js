@@ -2019,17 +2019,9 @@ const App = (() => {
     }
   }
 
+  // the shared opener (util.js): the Mac's browser in the desktop app, local or remote; a new tab otherwise
   function openExternalUrl(url) {
-    try {
-      const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
-      if (invoke) {
-        invoke('open_external_url', { url }).catch(() => {
-          try { window.open(url, '_blank', 'noopener'); } catch (_) {}
-        });
-        return;
-      }
-    } catch (_) {}
-    try { window.open(url, '_blank', 'noopener'); } catch (_) {}
+    if (url) U.openExternal(url);
   }
 
   // Kick off the device-code flow: request a code, show it + open the verification page, then poll until done.

@@ -100,7 +100,13 @@ async function connect(o) {
       if (!stopping && !paused) { console.error('SSH connection lost; reconnecting. Server work continues.'); reconnectTimer = setTimeout(startTunnel, delay); delay = Math.min(delay * 2, 5000); }
     });
     const current = ssh;
-    waitPort(tunnelPort, current).then(() => { if (ssh === current && current.exitCode === null) { ready = true; delay = 1000; } }).catch(() => current.kill());
+    waitPort(tunnelPort, current).then(() => {
+      if (ssh !== current || current.exitCode !== null) return;
+      ready = true; delay = 1000;
+      // Sign in to the gateway now, while the window is still loading, instead of on its first request.
+      // A failure here is retried by that request.
+      getSession().catch(() => {});
+    }).catch(() => current.kill());
   }
   const getSession = async () => {
     if (paused || !ready) throw new Error('SSH disconnected');

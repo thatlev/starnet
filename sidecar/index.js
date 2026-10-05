@@ -136,6 +136,7 @@ const { runRouteFailure } = require('./runroute.js');   // a failure escaping ha
 const { json: respondJson, readJsonBody, isAgentId } = require('./respond.js');   // canonical json()/body/agent-id helpers — adopt incrementally, don't mass-migrate
 const { readBody, readBodyBuffer } = require('./http-body.js');
 const { MIME, CHANNEL_UPLOAD_MAX_BYTES, mimeForPath, safeDownloadName, isActiveDeliverable, parseRange } = require('./file-response.js');
+const { makeStaticAssets } = require('./static-assets.js');   // the frontend files: hashed URLs, caching, compression
 const { reflect, reflectSalient, recordFromProposal, feedbackFor, highStakes } = require('./reflect.js');
 const Failreview = require('./failreview.js');   // failure-review aux pass: PURE lesson producer for FAILED runs (reflect.js mold)
 const { swallow, note: failNote, summary: failopenSummary, setClock: failopenSetClock } = require('./failopen.js');    // tagged fail-open: a swallowed error stays visible (throttled warn + counter + diagnostics summary)
@@ -21711,32 +21712,46 @@ async function serveShared(req, res) {
     if (!/^[A-Za-z0-9_.-]+\.js$/.test(rel)) { res.writeHead(403); return res.end('forbidden'); }
     const abs = path.resolve(SHARED, rel);
     if (abs.indexOf(SHARED + path.sep) !== 0) { res.writeHead(403); return res.end('forbidden'); }
-    const data = await fsp.readFile(abs);
-    res.writeHead(200, { 'Content-Type': MIME['.js'] || 'application/javascript', 'Cache-Control': 'no-store' });
-    res.end(data);
+    // compressed and revalidated with an ETag, like the frontend's own scripts
+    return sharedAssets.serve(req, res, { path: rel });
   } catch (e) { res.writeHead(404); res.end('not found'); }
 }
 
-async function serveStatic(req, res) {
+// The frontend files: the boot document is fresh on every load (it carries the API token) and pins each script and
+// stylesheet to its content hash, so those can be cached and compressed (static-assets.js).
+// An installed release lets its images be cached until they change. remote/install-linux.sh writes RELEASE and keeps
+// the package's per-file SHA-256 (PACKAGE-SHA256.json, verified before installation); the frontend/assets entries
+// give a token that changes only when an image or data file does. Without them (a development checkout) nothing is
+// pinned; a release installed without the checksums is fingerprinted by static-assets.js instead.
+function releaseAssetIdentity() {
+  const root = path.resolve(FRONTEND, '..');
+  let release = '';
+  try { release = fs.readFileSync(path.join(root, 'RELEASE'), 'utf8').trim(); } catch (_) { return { release: '', assetToken: '' }; }
   try {
-    const url = decodeURIComponent((req.url || '/').split('?')[0]);
-    const rel = (url === '/' ? 'index.html' : url.replace(/^\/+/, ''));
-    const abs = path.resolve(FRONTEND, rel);
-    if (abs !== FRONTEND && abs.indexOf(FRONTEND + path.sep) !== 0) { res.writeHead(403); return res.end('forbidden'); }
-    let data = await fsp.readFile(abs);
-    if (abs.toLowerCase() === path.resolve(FRONTEND, 'index.html').toLowerCase() ||
-        (DEV_MODE && abs.toLowerCase() === path.resolve(FRONTEND, 'agent-station-demo.html').toLowerCase())) {
-      let boot = '<script>window.__STARNET_API_TOKEN__=' + JSON.stringify(API_TOKEN) + ';';
-      // DEV fast-path: hand the page a model + provider hint so a fresh origin auto-resumes the seeded
-      // save with no setup. No secret crosses here — the key stays server-side in runtimeKey.
-      // `hasKey` is the honest half: the page's credential badge assumed a DEV boot meant the host HELD a
-      // runtime key for `prov`, so a seeded station with no key at all still rendered "● KEY SAVED". Say
-      // whether one actually exists — still no secret crosses, only the boolean.
-      if (DEV_MODE) boot += 'window.__STARNET_DEV__=' + JSON.stringify({ model: CRON_DEFAULT_MODEL || '', prov: (!runtimeKey && codexTokens && codexTokens.access_token) ? 'codex' : 'openrouter', hasKey: !!runtimeKey }) + ';';
-      boot += '</script>';
-      data = Buffer.from(String(data).replace(/<\/head>/i, boot + '\n</head>'), 'utf8');
-    }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' });
-    res.end(data);
-  } catch (e) { res.writeHead(404); res.end('not found'); }
+    const sums = JSON.parse(fs.readFileSync(path.join(root, 'PACKAGE-SHA256.json'), 'utf8'));
+    const rows = Object.keys(sums).filter(file => file.startsWith('frontend/assets/')).sort().map(file => file + '\0' + sums[file]);
+    const assetToken = rows.length ? crypto.createHash('sha256').update(rows.join('\n')).digest('base64url').slice(0, 12) : '';
+    return { release, assetToken };
+  } catch (_) { return { release, assetToken: '' }; }
+}
+const staticAssets = makeStaticAssets(Object.assign({ root: FRONTEND, mime: MIME }, releaseAssetIdentity()));
+staticAssets.releaseToken();   // fingerprint the release in the background, before the first page load
+const sharedAssets = makeStaticAssets({ root: SHARED, mime: MIME });   // /shared/*.js (serveShared keeps its allowlist)
+function isBootDocument(abs) {
+  const file = abs.toLowerCase();
+  return file === path.resolve(FRONTEND, 'index.html').toLowerCase() ||
+    (DEV_MODE && file === path.resolve(FRONTEND, 'agent-station-demo.html').toLowerCase());
+}
+function bootScript() {
+  let boot = '<script>window.__STARNET_API_TOKEN__=' + JSON.stringify(API_TOKEN) + ';';
+  // DEV fast-path: hand the page a model + provider hint so a fresh origin auto-resumes the seeded
+  // save with no setup. No secret crosses here — the key stays server-side in runtimeKey.
+  // `hasKey` is the honest half: the page's credential badge assumed a DEV boot meant the host HELD a
+  // runtime key for `prov`, so a seeded station with no key at all still rendered "● KEY SAVED". Say
+  // whether one actually exists — still no secret crosses, only the boolean.
+  if (DEV_MODE) boot += 'window.__STARNET_DEV__=' + JSON.stringify({ model: CRON_DEFAULT_MODEL || '', prov: (!runtimeKey && codexTokens && codexTokens.access_token) ? 'codex' : 'openrouter', hasKey: !!runtimeKey }) + ';';
+  return boot + '</script>';
+}
+function serveStatic(req, res) {
+  return staticAssets.serve(req, res, { bootDocument: isBootDocument, bootScript });
 }

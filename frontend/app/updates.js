@@ -458,17 +458,9 @@ const Updates = (() => {
     return out;
   }
 
-  // Open the releases page in the system browser — same invoke-with-fallback pattern app.js uses.
+  // Open the releases page in the system browser through the shared opener (util.js U.openExternal).
   function openReleasesPage() {
-    try {
-      if (TAURI && typeof TAURI.invoke === 'function') {
-        TAURI.invoke('open_external_url', { url: RELEASES_PAGE }).catch(() => {
-          try { window.open(RELEASES_PAGE, '_blank', 'noopener'); } catch (_) {}
-        });
-        return;
-      }
-    } catch (_) {}
-    try { window.open(RELEASES_PAGE, '_blank', 'noopener'); } catch (_) {}
+    U.openExternal(RELEASES_PAGE);
   }
 
   function wire(body) {

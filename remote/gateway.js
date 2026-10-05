@@ -30,23 +30,38 @@ async function githubIdentity(token) {
   return { id: user.id, login: user.login };
 }
 
+// The only cache policies a reply may keep through the proxy: the station's own script, style and image files
+// (sidecar/static-assets.js), either pinned to a content hash (immutable) or revalidated with an ETag (no-cache).
+// Everything else, and every /api reply, stays no-store.
+const STATIC_CACHE_POLICIES = new Set(['public, max-age=31536000, immutable', 'no-cache']);
+function cachePolicy(req, url, reply) {
+  const policy = String(reply.headers['cache-control'] || '');
+  const read = req.method === 'GET' || req.method === 'HEAD';
+  const fresh = reply.statusCode === 200 || reply.statusCode === 304;
+  return read && fresh && !/^\/api(?:\/|\?|$)/.test(url) && STATIC_CACHE_POLICIES.has(policy) ? policy : 'no-store';
+}
+
 // Streaming proxy: never buffers run output or SSE. Losing a viewer closes only
 // the transport. The runtime's server-owned run mode controls execution lifetime.
 function proxy(req, res, { port, headers = {}, url = req.url, transformHtml, onUnauthorized, agent }) {
+  const transform = !!transformHtml && (url === '/' || url === '/index.html');
   const forwarded = {};
-  for (const key of ['content-type', 'accept', 'last-event-id', 'range', 'if-none-match', 'x-starnet-token', 'x-skynet-token']) {
+  for (const key of ['content-type', 'accept', 'accept-encoding', 'last-event-id', 'range', 'if-none-match', 'x-starnet-token', 'x-skynet-token']) {
     if (req.headers[key]) forwarded[key] = req.headers[key];
   }
+  // the station page is rewritten below, so it must arrive as plain text
+  if (transform) delete forwarded['accept-encoding'];
   const upstream = http.request({ host: '127.0.0.1', port, method: req.method, path: url,
     headers: { ...forwarded, ...headers, host: '127.0.0.1:' + port }, agent }, reply => {
     if (reply.statusCode === 401) onUnauthorized?.();
-    const out = { ...reply.headers, 'cache-control': 'no-store', 'x-accel-buffering': 'no' };
+    const out = { ...reply.headers, 'cache-control': cachePolicy(req, url, reply), 'x-accel-buffering': 'no' };
     delete out['access-control-allow-origin']; delete out['access-control-allow-credentials'];
     delete out['connection']; delete out['transfer-encoding'];
-    if (transformHtml && String(reply.headers['content-type']).includes('text/html') && (url === '/' || url === '/index.html')) {
+    if (transform && String(reply.headers['content-type']).includes('text/html') && !reply.headers['content-encoding']) {
       let body = '', bytes = 0;
-      reply.on('data', c => { bytes += c.length; if (bytes > 2 * 1024 * 1024) return upstream.destroy(); body += c; });
-      reply.on('end', () => { delete out['content-length']; res.writeHead(reply.statusCode, out); res.end(transformHtml(body)); });
+      reply.setEncoding('utf8');
+      reply.on('data', c => { bytes += Buffer.byteLength(c); if (bytes > 2 * 1024 * 1024) return upstream.destroy(); body += c; });
+      reply.on('end', () => { delete out['content-length']; delete out['etag']; res.writeHead(reply.statusCode, out); res.end(transformHtml(body)); });
     } else {
       res.writeHead(reply.statusCode, out);
       res.flushHeaders();

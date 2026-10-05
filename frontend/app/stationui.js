@@ -4246,7 +4246,13 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
                   nothing if the balance is zero.
      Refreshed from the same /api/credits + /api/credits/linkable pair the STORE reads, so the two
      panels can never disagree about whether this station has credits. */
-  let creditsProv = { state: 'absent', balanceUsd: null, tier: '' };
+  /* A fourth, first-paint-only state: 'checking'. Whether the card EXISTS is remembered on this device (only that
+     bit, never a balance or a link), so a station that showed the card last time draws its slot at once, marked
+     CHECKING and offering nothing, instead of pushing every provider below it down when the answer lands. */
+  const CREDITS_CARD_KEY = 'starnet.settings.creditsCard.v1';
+  function creditsCardRemembered() { try { return localStorage.getItem(CREDITS_CARD_KEY) === '1'; } catch (_) { return false; } }
+  function rememberCreditsCard() { try { localStorage.setItem(CREDITS_CARD_KEY, creditsProv.state === 'absent' ? '0' : '1'); } catch (_) { /* private mode: the card just appears late */ } }
+  let creditsProv = { state: creditsCardRemembered() ? 'checking' : 'absent', balanceUsd: null, tier: '' };
   // Publish a DEFINITIVE credits answer into the same cache COMMS/modeldock reads. SETTINGS used to read
   // /api/credits directly and paint LINKED while Harness kept a failed boot-time probe as `false`, so the
   // model dock simultaneously claimed "this station isn't linked". Temporary service trouble publishes
@@ -4258,6 +4264,9 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   }
   function refreshCreditsProvider() {
     const prior = creditsProv;
+    return readCreditsProvider(prior).then(state => { rememberCreditsCard(); return state; });
+  }
+  function readCreditsProvider(prior) {
     return Harness.api.get('/api/credits?history=0').catch(e => ({ configured: false, unavailable: !/http 404\b/.test(String((e && e.message) || e)) }))
       .then(j => {
         if (j && j.configured) {
@@ -4346,6 +4355,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
         const wasConnected = codexConnected(), wasExpired = codexExpired();
         codexStatusKnown = next;
         if (codexConnected() !== wasConnected || codexExpired() !== wasExpired) scheduleSettingsRepaint();
+        settleProviderCards();
       })
       .catch(() => {})
       .finally(() => { codexConnectionChecking = false; });
@@ -4383,6 +4393,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
         const wasConnected = oauthProvConnected(pid), wasExpired = oauthProvExpired(pid);
         oauthStatus[pid] = next;
         if (oauthProvConnected(pid) !== wasConnected || oauthProvExpired(pid) !== wasExpired) scheduleSettingsRepaint();
+        settleProviderCards();
       })
       .catch(() => {})
       .finally(() => { oauthChecking[pid] = false; });
@@ -4455,6 +4466,62 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
         }
       }
     });
+  }
+  /* STEADY PROVIDER CARDS. A card whose answer is still on its way (Claude Code's sign-ins, a subscription's
+     accounts, STARNET MANAGED's link) is drawn short, and grew when the answer landed, pushing every card below it
+     down — several times while SETTINGS opened. Each settled paint now remembers how tall the cards were at this
+     width (only heights, nothing about the accounts); the next paint keeps that height for a card still loading, so
+     its answer fills the space it already has. A card is released the moment its own answer is in. */
+  const CARD_HEIGHTS_KEY = 'starnet.settings.cardHeights.v1';
+  function providerCardLoading(id) {
+    if (id === 'claude-cli') return claudeCliSt === undefined;
+    if (id === 'starnet') return creditsProv.state === 'checking';
+    if (STACKABLE_OAUTH.indexOf(id) >= 0) {
+      const status = id === 'codex' ? codexStatusKnown : oauthStatus[id];
+      return status === null || oauthAcctState(id).list === undefined;
+    }
+    return false;
+  }
+  function savedCardHeights() {
+    try {
+      const v = JSON.parse(localStorage.getItem(CARD_HEIGHTS_KEY) || 'null');
+      return v && typeof v.w === 'number' && v.h && typeof v.h === 'object' ? v : null;
+    } catch (_) { return null; }
+  }
+  function providerCards(root) { return root ? Array.from(root.querySelectorAll('.prov-list .prov-card[data-provider]')) : []; }
+  function rememberCardHeights(cards) {
+    const width = cards.length ? cards[0].offsetWidth : 0;
+    if (!width) return;   // the PROVIDERS pane is hidden
+    requestAnimationFrame(() => {
+      if (!cards[0].isConnected || cards[0].offsetWidth !== width || cards.some(card => card.style.minHeight)) return;
+      const h = {};
+      for (const card of cards) if (card.offsetHeight > 0) h[card.dataset.provider] = card.offsetHeight;
+      try { localStorage.setItem(CARD_HEIGHTS_KEY, JSON.stringify({ w: width, h })); } catch (_) { /* nothing is reserved next time */ }
+    });
+  }
+  // after a settings build: reserve the remembered height for every card still loading, or remember a settled paint
+  function steadyProviderCards(root) {
+    const cards = providerCards(root);
+    const loading = cards.filter(card => providerCardLoading(card.dataset.provider));
+    if (!loading.length) return rememberCardHeights(cards);
+    const width = cards[0].offsetWidth, saved = savedCardHeights();
+    if (!width || !saved || Math.abs(saved.w - width) > 1) return;
+    for (const card of loading) {
+      const h = Number(saved.h[card.dataset.provider]);
+      if (h > 0 && h < 4000) card.style.minHeight = h + 'px';
+    }
+  }
+  // an answer that does not need a rebuild: release the cards that are no longer loading. A queued rebuild draws
+  // them fresh anyway, and releasing first would shrink a card for a moment before it grows again.
+  function settleProviderCards() {
+    if (settingsRepaintQueued || !open.settings) return;
+    const cards = providerCards(open.settings);
+    let loading = false;
+    for (const card of cards) {
+      if (providerCardLoading(card.dataset.provider)) loading = true;
+      else if (card.style.minHeight) card.style.minHeight = '';
+    }
+    if (!loading) rememberCardHeights(cards);
   }
   /* CLAUDE CODE card truth: /api/auth/claude-cli/status (the user's own `claude auth status`). undefined = not asked
      yet, null = the station couldn't answer. The card never says SIGNED IN from anything else. */
@@ -4850,12 +4917,20 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   function creditsProviderCard(p, pi, active) {
     const linked = creditsProv.state === 'linked';
     const saved = creditsProv.state === 'saved';
+    const checking = creditsProv.state === 'checking';
     const runnable = !!(linked && p.id === active && H() && H().getModel && H().getModel());
     const cls = linked ? 'conn' : 'avail';
     const bal = (creditsProv.balanceUsd == null) ? null : fmtUsd(creditsProv.balanceUsd);
     const stat = linked
       ? ('● LINKED · ' + esc(bal == null ? 'BALANCE UNAVAILABLE' : bal) + (creditsProv.tier ? ' · $' + esc(creditsProv.tier) + '/MO' : ''))
-      : (saved ? '◌ LINK SAVED · SERVICE UNAVAILABLE' : '○ NOT LINKED');
+      : saved ? '◌ LINK SAVED · SERVICE UNAVAILABLE' : checking ? '◐ CHECKING…' : '○ NOT LINKED';
+    // While checking, the action keeps its place but offers nothing: the answer decides LINK STATION or STORE.
+    const action = checking
+      ? '<button class="bb sm prov-addkey" disabled aria-label="Checking whether this station is linked">◐ CHECKING…</button>'
+      : '<button class="bb sm prov-addkey" data-act="credits-store" data-provider="' + esc(p.id) + '" ' +
+        'aria-label="' + ((linked || saved) ? 'Open the STORE' : 'Link this station to a StarNet account') + '" ' +
+        'title="' + ((linked || saved) ? 'balance, plan and history live in the STORE' : 'link this station to a StarNet account') + '">' +
+        ((linked || saved) ? '◆ STORE' : '↗ LINK STATION') + '</button>';
     return '<div class="prov-card ' + cls + '" data-provider="' + esc(p.id) + '" role="group" aria-label="' + esc(p.name) + ' provider" style="--ci:' + pi + '">' +
       '<button class="prov-select" data-act="prov-select" aria-label="Select ' + esc(p.name) + ' provider">' +
         providerLogoHtml(p.id) +
@@ -4865,10 +4940,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
         '</span>' +
       '</button>' +
         '<span class="prov-stat"><span class="prov-stat-t">' + stat + '</span></span>' +
-      '<button class="bb sm prov-addkey" data-act="credits-store" data-provider="' + esc(p.id) + '" ' +
-      'aria-label="' + ((linked || saved) ? 'Open the STORE' : 'Link this station to a StarNet account') + '" ' +
-      'title="' + ((linked || saved) ? 'balance, plan and history live in the STORE' : 'link this station to a StarNet account') + '">' +
-      ((linked || saved) ? '◆ STORE' : '↗ LINK STATION') + '</button>' +
+      action +
       '</div>';
   }
 
@@ -5607,37 +5679,20 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     catch (_) { return null; }
   }
 
-  // open a URL in the user's real browser (Tauri shell when packaged, a new tab otherwise). Buying credits is
-  // ALWAYS an external link — this app never renders a payment form or handles card data.
+  // open a URL in the user's real browser through the shared U.openExternal (desktop app, remote desktop app
+  // or a plain browser tab). Buying credits is ALWAYS an external link — this app never renders a payment form
+  // or handles card data.
   function openExternal(url) {
-    if (!url) return;
-    try {
-      const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
-      if (invoke) { invoke('open_external_url', { url }).catch(() => { try { window.open(url, '_blank', 'noopener'); } catch (_) {} }); return; }
-    } catch (_) {}
-    try { window.open(url, '_blank', 'noopener'); } catch (_) {}
+    if (url) U.openExternal(url);
   }
 
   // Open an interactive sign-in / consent URL and report whether it ACTUALLY opened, so callers can keep
   // their "waiting for sign-in…" copy + status poll honest (truthful-telemetry law: never claim a window
-  // exists when it doesn't). Two worlds:
-  //   • Desktop (Tauri): a raw window.open silently fails under the window policy, so hand the URL to the OS
-  //     browser via open_external_url — a real awaitable success/fail. No window.open fallback here: on desktop
-  //     that IS the failing path, so a reject means the browser genuinely didn't open — say so, don't pretend.
-  //   • Browser: window.open opens a popup, but returns null when popup-blocked — that null is the honest signal.
+  // exists when it doesn't). In the desktop app the page opens in the Mac's browser; in a plain browser it is a
+  // popup, where a blocked popup is the honest "not opened" (window.open lives in U.openExternal).
   // Returns { opened, where:'browser'|'popup', win } — win is the popup handle (browser only) for a later close().
-  async function openSignIn(url) {
-    if (!url) return { opened: false, where: 'popup', win: null };
-    try {
-      const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
-      if (invoke) {
-        try { await invoke('open_external_url', { url }); return { opened: true, where: 'browser', win: null }; }
-        catch (_) { return { opened: false, where: 'browser', win: null }; }
-      }
-    } catch (_) {}
-    let win = null;
-    try { win = window.open(url, 'starnet_oauth', 'width=540,height=720'); } catch (_) {}
-    return { opened: !!win, where: 'popup', win };
+  function openSignIn(url) {
+    return U.openExternal(url, { name: 'starnet_oauth', features: 'width=540,height=720' });
   }
 
   // STORE / MANAGED CREDITS — populate #credits-store from the real /api/credits payload. The endpoint 404s unless
@@ -7023,6 +7078,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     wireProviderActions(host);
     wireKeyActions(host);
     queueProviderHealthRefresh();
+    steadyProviderCards(host);   // keep loading cards at their remembered height (or remember a settled paint)
     // The STARNET MANAGED card is drawn from a cached credits state, so the FIRST paint of a fresh session
     // has nothing to go on. Re-read, and repaint only if the answer changed the card's existence or its
     // balance — an unconditional rerender here would wipe an open key editor on every settings open.
@@ -7030,6 +7086,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       const was = creditsProv.state + ':' + creditsProv.balanceUsd + ':' + creditsProv.tier;
       refreshCreditsProvider().then(() => {
         if (was !== creditsProv.state + ':' + creditsProv.balanceUsd + ':' + creditsProv.tier) scheduleSettingsRepaint();
+        settleProviderCards();
       }).catch(() => {});
     })();
     wireCredits(host);

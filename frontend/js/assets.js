@@ -673,7 +673,7 @@ const SPRITES = (() => {
       const img = new Image();
       img.onload = () => res(img);
       img.onerror = () => res(null);
-      img.src = path;
+      img.src = (typeof U !== 'undefined' && U.assetUrl) ? U.assetUrl(path) : path;   // release-pinned, cacheable (util.js)
     });
   }
 
@@ -715,7 +715,9 @@ const SPRITES = (() => {
   async function init() {
     loading = true;
     try {
-      const resp = await fetch('assets/sprites/manifest.json', { cache: 'no-store' });
+      // release-pinned like the sprites themselves (util.js U.assetUrl); unpinned it revalidates every load
+      const manifestUrl = 'assets/sprites/manifest.json';
+      const resp = await fetch((typeof U !== 'undefined' && U.assetUrl) ? U.assetUrl(manifestUrl) : manifestUrl);
       if (!resp.ok) return;
       const man = await resp.json();
       if(typeof SkinStudy!=='undefined')await SkinStudy.install(man);

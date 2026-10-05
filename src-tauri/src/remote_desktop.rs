@@ -388,6 +388,20 @@ fn external_link(url: &tauri::Url) -> Option<String> {
     matches!(url.scheme(), "http" | "https").then(|| url.to_string())
 }
 
+/// `starnet-connect://open-external?url=<encoded http(s) link>`: how the remote station page opens a sign-in or
+/// help page in the Mac's default browser. It has no command bridge, and WebKit blocks `window.open` outside a
+/// click (a sign-in link arrives after a fetch), while a navigation is never popup-blocked. Only web links pass.
+fn external_open_request(url: &tauri::Url) -> Option<String> {
+    if url.scheme() != "starnet-connect" || url.host_str() != Some("open-external") {
+        return None;
+    }
+    let target = url
+        .query_pairs()
+        .find(|(key, _)| key == "url")
+        .map(|(_, value)| value.into_owned())?;
+    external_link(&target.parse().ok()?)
+}
+
 fn is_startup_page(url: &tauri::Url) -> bool {
     url.scheme() == "tauri"
         && url.host_str() == Some("localhost")
@@ -448,6 +462,13 @@ fn build_remote_window(
             }
             // A Mac-side appearance choice only: saved natively, no other native authority.
             if crate::handle_menu_bar_navigation(&navigation, url) {
+                return false;
+            }
+            // Open a web page in the Mac's browser; the station page itself stays where it is.
+            if url.scheme() == "starnet-connect" {
+                if let Some(link) = external_open_request(url) {
+                    let _ = crate::open_external_url(link);
+                }
                 return false;
             }
             if url.scheme() == "http" && url.host_str() == Some("127.0.0.1") && url.port() == Some(port) {
@@ -552,7 +573,9 @@ fn show_remote_window(app: &AppHandle, port: u16) -> Result<(), String> {
 }
 
 fn remote_initialization(port: u16) -> String {
-    let mut script = "window.__TAURI__=undefined; window.__STARNET_NATIVE__=true; window.__STARNET_CONNECTION_SETUP__=true;".to_string();
+    // __STARNET_OPEN_EXTERNAL__: this window hands starnet-connect://open-external links to the Mac browser. A newer
+    // station page checks it, so on an older app it keeps using window.open.
+    let mut script = "window.__TAURI__=undefined; window.__STARNET_NATIVE__=true; window.__STARNET_CONNECTION_SETUP__=true; window.__STARNET_OPEN_EXTERNAL__=true;".to_string();
     let legacy = std::env::var_os("HOME")
         .map(PathBuf::from)
         .and_then(|home| {
@@ -740,7 +763,8 @@ pub fn boot(app: &AppHandle, choice: &str) -> Result<(), Box<dyn std::error::Err
                     });
                     return;
                 }
-                std::thread::sleep(Duration::from_millis(200));
+                // a local loopback check; a short interval opens the station as soon as the connection is up
+                std::thread::sleep(Duration::from_millis(100));
             }
             if app
                 .state::<DesktopState>()
@@ -862,6 +886,31 @@ mod tests {
         for source in ["file:///etc/passwd", "starnet-connect://setup", "tauri://localhost/index.html", "javascript:alert(1)", "mailto:a@b.c"] {
             assert_eq!(external_link(&source.parse().unwrap()), None, "{source}");
         }
+    }
+    #[test]
+    fn remote_pages_open_web_links_in_the_browser_through_the_connect_scheme() {
+        let link = "https://claude.com/cai/oauth/authorize?code=true&client_id=a&state=b";
+        let encoded: String = tauri::Url::parse_with_params("starnet-connect://open-external", &[("url", link)])
+            .unwrap()
+            .into();
+        assert_eq!(external_open_request(&encoded.parse().unwrap()).as_deref(), Some(link));
+        let encoded_by_page = "starnet-connect://open-external?url=https%3A%2F%2Fclaude.com%2Fcai%2Foauth%2Fauthorize%3Fcode%3Dtrue%26state%3Db";
+        assert_eq!(
+            external_open_request(&encoded_by_page.parse().unwrap()).as_deref(),
+            Some("https://claude.com/cai/oauth/authorize?code=true&state=b")
+        );
+        for source in [
+            "starnet-connect://open-external?url=file%3A%2F%2F%2Fetc%2Fpasswd",
+            "starnet-connect://open-external?url=javascript%3Aalert(1)",
+            "starnet-connect://open-external?url=starnet-connect%3A%2F%2Fsetup",
+            "starnet-connect://open-external",
+            "starnet-connect://setup?url=https%3A%2F%2Fexample.com",
+            "https://example.com/?url=https%3A%2F%2Fexample.com",
+        ] {
+            assert_eq!(external_open_request(&source.parse().unwrap()), None, "{source}");
+        }
+        // the page learns the route exists only from this window
+        assert!(remote_initialization(8790).contains("window.__STARNET_OPEN_EXTERNAL__=true;"));
     }
     #[test]
     fn existing_stations_resume_and_fresh_users_get_the_chooser() {
