@@ -14,7 +14,7 @@
    the sidecar exits, so a half-finished sign-in never outlives the station.
 
    makeClaudeCliLogin({ host?, spawn?, env?, platform?, fs?, os?, clock?, ttlMs?, urlWaitMs? })
-     start()               -> { status:'pending', login_id, url } | { status:'connected', ... } | { status:'error', error, code }
+     start()               -> { status:'pending', login_id, url, opensBrowser } | { status:'connected', ... } | { status:'error', error, code }
      poll(login_id)        -> { status:'pending' } | { status:'connected', authMethod, email?, subscription? } | { status:'error', ... }
      submitCode(id, code)  -> { ok:true } | { ok:false, error }
      cancel(login_id)      -> { ok:true }
@@ -32,6 +32,11 @@ function makeClaudeCliLogin(opts) {
   const urlWaitMs = opts.urlWaitMs || 8000;             // how long start() waits for the CLI to print its URL
   // poll re-asks `claude auth status` every Nth poll (the tile polls every 1.5s, so 2 = ~3s) — a count, not a clock
   const statusEveryPolls = Math.max(1, opts.statusEveryPolls || 2);
+  // Can the CLI open a browser here? A Mac or Windows desktop, or a Linux desktop session, can. A headless server (a
+  // remote station) cannot: start() says so, and the station's own window opens the page the CLI printed instead.
+  const platform = opts.platform || process.platform;
+  const env = opts.env || process.env;
+  const opensBrowser = platform === 'darwin' || platform === 'win32' || !!(env.DISPLAY || env.WAYLAND_DISPLAY);
   let flow = null;   // { id, child, url, exit: null|{code}, stderr, timer }
 
   function end(f) {
@@ -88,7 +93,7 @@ function makeClaudeCliLogin(opts) {
     await Promise.race([urlReady, new Promise(r => { waitTimer = setTimeout(r, urlWaitMs); })]);
     clearTimeout(waitTimer);
     if (f.exit) return settle(f);
-    return { status: 'pending', login_id: f.id, url: f.url || '' };
+    return { status: 'pending', login_id: f.id, url: f.url || '', opensBrowser };
   }
 
   // The child has exited: the ONLY proof of "connected" is `claude auth status` saying so afterwards.

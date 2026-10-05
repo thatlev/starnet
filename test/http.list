@@ -128,4 +128,5 @@ test/remote-provider-persistence.test.js
 
 # Subscription account stacking (Claude Code, ChatGPT, Grok, Kimi).
 test/subscription-stacking.e2e.test.js
+test/account-choice.e2e.test.js
 test/subscription-stacking-oauth.e2e.test.js

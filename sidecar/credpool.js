@@ -17,6 +17,7 @@
                                      //   sink to the end (soonest-available first); capped. Never empty if input isn't.
        penalize(key) -> void,       // mark a key as cooling until now + cooldownMs (call when it fails a rotate reason)
        coolingUntil(key) -> number  // ms timestamp the key is cooling until, or 0 if available
+       forgive(key) -> boolean      // drop a key's cooldown (a fresh sign-in on that account)
      } */
 'use strict';
 (function (root, factory) {
@@ -77,7 +78,10 @@
       cooling.set(s, clock.now() + ms);
     }
 
-    return { order, penalize, coolingUntil, _internals: { cooling, cooldownMs } };
+    // A NEW sign-in on an account (subscription stacking) supersedes the failure that cooled it: forget the cooldown.
+    function forgive(key) { return cooling.delete(key == null ? '' : String(key)); }
+
+    return { order, penalize, coolingUntil, forgive, _internals: { cooling, cooldownMs } };
   }
 
   return { makeCredPool, _internals: { DEFAULT_COOLDOWN_MS, MAX_COOLDOWN_MS, MAX_KEYS } };

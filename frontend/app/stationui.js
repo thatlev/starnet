@@ -2518,6 +2518,37 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   // station default. Writes a.model/a.provider via App.setAgentModel → pushRoster, so the sidecar roster records
   // the pin (honored by runOnce when a run carries no explicit model, and by cron). "Follow station default" clears
   // it. The primary interactive model still lives in the COMMS dock; this is the durable per-agent floor.
+  /* ACCOUNT (per character): which connected sign-in this agent's runs start on when its provider has several. ''
+     follows the station rule (Settings → PROVIDERS → ACCOUNT CHOICE); a preferred account is used first while it is
+     ready and the others take over at its limit. Saved through App.setAgentAccountRule → the roster (runOnce reads it). */
+  function agentAccountRuleRow(a) {
+    const cur = String((a && a.accountRule) || '');
+    const station = (acctRuleState.rule || 'best') === 'best' ? 'best available' : 'in order';
+    const base = [['', 'Station rule (' + station + ')'], ['best', 'Best available — most usage left'], ['order', 'In order — first ready account']];
+    let opts = base.map(([v, t]) => '<option value="' + v + '"' + (cur === v ? ' selected' : '') + '>' + esc(t) + '</option>').join('');
+    const m = /^prefer:([a-z-]+):(.+)$/.exec(cur);
+    if (m) opts += '<option value="' + esc(cur) + '" selected>' + esc('Prefer ' + provName(m[1]) + ' · ' + (m[2] === 'primary' ? 'account 1' : 'a connected account')) + '</option>';
+    return '<div class="set-row mc-acct-row"><label for="ag-acct-rule">ACCOUNT</label>' +
+        '<select class="fbc-sel" id="ag-acct-rule" aria-describedby="ag-acct-hint">' + opts + '</select></div>' +
+      '<div class="mc-hint" id="ag-acct-hint">For a provider with several signed-in accounts. A preferred account is used first while it is ready; the others take over when it hits its limit.</div>' +
+      '<div id="ag-acct-msg" class="msg" role="status" aria-live="polite"></div>';
+  }
+  // every signed-in account of every stacked provider, as "prefer" choices (each list is the station's own answer)
+  async function loadAgentAccountChoices() {
+    const jobs = [['claude-cli', typeof ClaudeCliSignIn !== 'undefined' ? ClaudeCliSignIn.accounts() : null]]
+      .concat(STACKABLE_OAUTH.map(pid => [pid, typeof OAuthAccounts !== 'undefined' ? OAuthAccounts.for(pid).accounts() : null]));
+    const res = await Promise.all(jobs.map(([pid, p]) => Promise.resolve(p).catch(() => null).then(j => [pid, j])));
+    const out = [];
+    for (const [pid, j] of res) {
+      if (!j || !Array.isArray(j.accounts)) continue;
+      const items = j.accounts.filter(x => x && (pid === 'claude-cli' ? x.loggedIn : x.connected)).map(x => ({
+        value: 'prefer:' + pid + ':' + (x.account || 'primary'),
+        label: String(x.label || 'account').replace(/^./, c => c.toUpperCase()) + (x.email ? ' — ' + x.email : '') + (x.plan ? ' · ' + String(x.plan).toUpperCase() : '')
+      }));
+      if (items.length) out.push({ name: provName(pid), items });
+    }
+    return out;
+  }
   function modelCard(a) {
     const model = (a && a.model) ? String(a.model) : '';
     const prov = (a && a.provider) ? String(a.provider) : '';
@@ -2534,6 +2565,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       '<div class="cf-head"><span class="cf-file">▣ model</span></div>' +
       '<div class="cf-desc">What this agent runs on. Pick a model to run this agent on it everywhere — chat, delegated work, scheduled routines — independent of the station default in the COMMS dock. “Follow station default” clears the pin. Choose SAVE MODEL to apply your selection.</div>' +
       picker +
+      agentAccountRuleRow(a) +
       '<details class="mc-adv"' + ((pinned && !hasPicker) ? ' open' : '') + '><summary>advanced — type a model id</summary>' +
         '<div class="set-row"><label for="ag-model-in">MODEL</label><input id="ag-model-in" class="key-input" type="text" spellcheck="false" autocomplete="off" placeholder="e.g. anthropic/claude-sonnet-4-5" value="' + esc(model) + '"></div>' +
         '<div class="set-row"><label for="ag-prov-in">PROVIDER</label><input id="ag-prov-in" class="key-input" type="text" spellcheck="false" autocomplete="off" placeholder="e.g. openrouter · anthropic · codex" value="' + esc(prov) + '"></div>' +
@@ -2615,6 +2647,38 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     });
     const mClear = body.querySelector('#ag-model-clear');
     if (mClear) mClear.addEventListener('click', () => applyModel('', '', ''));
+    // ACCOUNT rule: the prefer-one-account choices load from the station; a change saves at once (roster push)
+    const acctSel = body.querySelector('#ag-acct-rule');
+    if (acctSel) {
+      const acctMsg = body.querySelector('#ag-acct-msg');
+      const setAcctMsg = (t, ok) => { if (acctMsg) { acctMsg.textContent = t || ''; acctMsg.className = 'msg' + (ok ? ' ok' : ''); } };
+      loadAgentAccountChoices().then(groups => {
+        if (!acctSel.isConnected || acctSel.disabled) return;
+        const cur = acctSel.value;
+        acctSel.querySelectorAll('optgroup, option[value^="prefer:"]').forEach(n => n.remove());
+        for (const g of groups) {
+          const og = document.createElement('optgroup');
+          og.label = 'Prefer a ' + g.name + ' account';
+          for (const it of g.items) { const op = document.createElement('option'); op.value = it.value; op.textContent = it.label; og.appendChild(op); }
+          acctSel.appendChild(og);
+        }
+        if (/^prefer:/.test(cur) && ![...acctSel.options].some(o => o.value === cur)) {
+          const op = document.createElement('option'); op.value = cur; op.textContent = 'Prefer an account that is no longer connected'; acctSel.appendChild(op);
+        }
+        acctSel.value = cur;
+      }).catch(() => {});
+      acctSel.addEventListener('change', () => {
+        if (!(access.config && access.config.setAccountRule)) { setAcctMsg('account rule unavailable'); return; }
+        const v = acctSel.value, before = String((a && a.accountRule) || '');
+        acctSel.disabled = true; setAcctMsg('saving…');
+        Promise.resolve(access.config.setAccountRule(a && a.id, v)).then(ok => {
+          acctSel.disabled = false;
+          if (!ok) { acctSel.value = before; setAcctMsg('could not save — the station did not record it'); sfx('bad'); return; }
+          if (a) a.accountRule = v;
+          setAcctMsg('✓ saved — its next runs use this', true); sfx('click');
+        });
+      });
+    }
     // PERSONALITY chips — apply via access.config.setPersona, then rerender so the sel chip + preview line
     // reflect the recorded truth (never an optimistic highlight). UNHINGED keeps the house two-press confirm:
     // press one names what it means (warn tint), press two applies; pressing anything else disarms.
@@ -4149,11 +4213,11 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     // to DISAPPEAR — see creditsProviderState() — because offering it on a station with no cloud configured
     // would advertise an account the user cannot create.
     { id: 'starnet',       name: 'STARNET MANAGED',   endpoint: 'managed inference · credits', blurb: 'no API key — runs on your balance', live: true, credits: true },
+    { id: 'claude-cli',    name: 'CLAUDE CODE',       endpoint: 'OAuth · Claude subscription', blurb: 'sign-in, no API key', live: true },
     { id: 'openrouter',    name: 'OPENROUTER',        endpoint: 'openrouter.ai/api/v1',      blurb: 'one key · 300+ models',  live: true },
     { id: 'codex',         name: 'CHATGPT (CODEX)',   endpoint: 'OAuth · ChatGPT subscription', blurb: 'sign-in, no API key',  live: true },
     { id: 'grok',          name: 'GROK (XAI)',        endpoint: 'OAuth · SuperGrok / X Premium+', blurb: 'sign-in, no API key', live: true },
     { id: 'kimi',          name: 'KIMI FOR CODING',   endpoint: 'OAuth · Moonshot subscription', blurb: 'sign-in, no API key', live: true },
-    { id: 'claude-cli',    name: 'CLAUDE CODE',       endpoint: 'Claude Code · Claude subscription', blurb: 'sign-in, no API key', live: true },
     { id: 'openai',        name: 'OPENAI API',        endpoint: 'api.openai.com/v1',          blurb: 'OpenAI-compatible', live: true },
     { id: 'anthropic',     name: 'ANTHROPIC',         endpoint: 'api.anthropic.com/v1',       blurb: 'Claude native API', live: true },
     { id: 'gemini',        name: 'GEMINI',            endpoint: 'generativelanguage.googleapis.com/v1beta', blurb: 'Google native API', live: true },
@@ -4413,6 +4477,9 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     const open = document.getElementById('prov-claude-open');
     if (open) open.style.display = claudeCard.url ? '' : 'none';   // .bb sets display, which beats [hidden]
   }
+  // A check the station could not answer (a dropped link, a slow CLI) is retried on its own while Settings is open —
+  // it used to stick as COULDN'T CHECK until something forced a refresh. SIGN IN stays offered meanwhile.
+  let claudeCliRetry = null;
   function refreshClaudeCliCard(force) {
     if (typeof ClaudeCliSignIn === 'undefined' || claudeCliStPending || (!force && claudeCliSt !== undefined)) return;
     claudeCliStPending = true;
@@ -4422,9 +4489,16 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
         claudeCliSt = j.accounts[0];
         claudeAccounts = j.accounts.slice(1);
         if (j.max > 0) claudeAccountsMax = j.max;
+        if (j.rule) acctRuleState.rule = j.rule;
       })
       .catch(() => { claudeCliSt = null; claudeAccounts = null; })
-      .finally(() => { claudeCliStPending = false; scheduleSettingsRepaint(); });
+      .finally(() => {
+        claudeCliStPending = false;
+        if (claudeCliSt === null && !claudeCliRetry) {
+          claudeCliRetry = setTimeout(() => { claudeCliRetry = null; if (open.settings) refreshClaudeCliCard(true); }, 8000);
+        }
+        scheduleSettingsRepaint();
+      });
   }
   function claudeCliPlan(st) {
     if (!st) return '';
@@ -4435,14 +4509,17 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   // under the card for the default sign-in, inside the accounts block for an extra account.
   function claudeFlowBoxHtml(flowing, show, dismissable) {
     return '<div class="key-edit codex-inline prov-oauth-inline prov-claude-inline" id="prov-claude-inline"' + (show ? '' : ' hidden') + '>' +
-      '<span class="dim" id="prov-claude-status">' + esc(claudeCard.msg) + '</span>' +
-      (!flowing && dismissable ? '<button class="bb sm" id="prov-claude-dismiss">✕ DISMISS</button>' : '') +
+      '<span class="prov-signin-msg" id="prov-claude-status" role="status" aria-live="polite">' + esc(claudeCard.msg) + '</span>' +
       (flowing
-        ? '<button class="bb sm" id="prov-claude-open"' + (claudeCard.url ? '' : ' style="display:none"') + '>↗ OPEN SIGN-IN PAGE</button>' +
-          '<button class="bb sm" id="prov-claude-cancel">✕ CANCEL</button>' +
-          '<input type="text" class="key-input" id="prov-claude-code" placeholder="page showed a code? paste it here" autocomplete="off" spellcheck="false">' +
-          '<button class="bb sm" id="prov-claude-code-go">SUBMIT</button>'
-        : '') +
+        ? '<span class="prov-signin-code">' +
+            '<input type="text" class="key-input" id="prov-claude-code" placeholder="paste the code Claude shows" aria-label="Code from the Claude sign-in page" autocomplete="off" spellcheck="false">' +
+            '<button class="bb sm" id="prov-claude-code-go">✓ CONNECT</button>' +
+          '</span>' +
+          '<span class="prov-signin-acts">' +
+            '<button class="bb sm" id="prov-claude-open"' + (claudeCard.url ? '' : ' style="display:none"') + '>↗ OPEN SIGN-IN PAGE</button>' +
+            '<button class="bb sm" id="prov-claude-cancel">✕ CANCEL</button>' +
+          '</span>'
+        : (dismissable ? '<span class="prov-signin-acts"><button class="bb sm" id="prov-claude-dismiss">✕ DISMISS</button></span>' : '')) +
       '</div>';
   }
   /* SUBSCRIPTION STACKING on the ChatGPT / Grok / Kimi cards: the same accounts block as CLAUDE CODE, driven by the
@@ -4462,28 +4539,96 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
   }
   if (typeof U !== 'undefined' && U.bus && U.bus.on) U.bus.on('provider.fallback', p => { if (p && p.toAccount) STACKABLE_OAUTH.forEach(pid => refreshOAuthAccounts(pid, true)); });
   function stackClock(ms) { try { return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch (_) { return ''; } }
-  // ONE account row (both blocks): label + email, what the provider proved, the station's cooldown, a same-account
-  // warning (two rows with one email add no usage), and the extra account's own actions.
+  // a reset or a rest's end: the time today, else the weekday and time ("FRI 14:00")
+  function stackWhen(ms) {
+    try {
+      if (ms - Date.now() < 20 * 3600 * 1000) return stackClock(ms);
+      return new Date(ms).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }).toUpperCase();
+    } catch (_) { return ''; }
+  }
+  /* ONE account row (both blocks): label + email; its plan and how much of the cap it has used (from the provider's
+     own usage report — ChatGPT's, or what Claude Code reported on its last run), with the fullest window's reset; a rest
+     after a usage limit (credPool's cooldown or the stated reset); a sign-in that failed for real; which account runs
+     NEXT under the station rule; a same-account warning (two rows with one email add no usage); its own actions. */
   function stackRowHtml(a, i, all, o) {
     const label = String((a && a.label) || ('account ' + (i + 1))).toUpperCase();
     const dupAt = o.signedIn && a.email ? all.findIndex(x => x && x.email === a.email && o.isIn(x)) : -1;
+    const failed = !!(o.signedIn && a.authFailed);
+    const restUntil = Math.max(Number(a.coolingUntil) || 0, Number(a.limitedUntil) || 0);
     const state = !o.signedIn ? '<span class="key-stat bad">' + (o.outLabel || '○ NOT SIGNED IN') + '</span>'
-      : a.coolingUntil > Date.now() ? '<span class="key-stat">◐ HIT A LIMIT · NEXT TRY AFTER ' + esc(stackClock(a.coolingUntil)) + '</span>'
-      : '<span class="key-stat on">● SIGNED IN</span>';
-    return '<div class="key-row prov-acct' + (o.signedIn ? '' : ' expired') + '" data-account="' + esc((a && a.account) || '') + '">' +
+      : failed ? '<span class="key-stat bad">⚠ SIGN-IN EXPIRED — SIGN IN AGAIN</span>'
+      : restUntil > Date.now() ? '<span class="key-stat">◐ RESTING AFTER ITS LIMIT · BACK ' + esc(stackWhen(restUntil)) + '</span>'
+      : '<span class="key-stat on">● READY</span>';
+    const plan = String(o.plan || a.plan || '').toUpperCase();
+    const used = (o.signedIn && typeof a.usedPct === 'number') ? Math.max(0, Math.min(100, a.usedPct)) : null;
+    const usage = used == null ? '' :
+      '<div class="acct-usage" title="' + used + '% of this account’s usage limit used">' +
+        '<span class="acct-meter' + (used >= 90 ? ' hot' : '') + '" style="--used:' + used + '%" aria-hidden="true"></span>' +
+        '<span class="acct-usage-t">' + used + '% USED' + (a.resetAt ? ' · RESETS ' + esc(stackWhen(a.resetAt)) : '') + '</span>' +
+      '</div>';
+    const canSignIn = i > 0 && (!o.signedIn || failed);
+    return '<div class="key-row prov-acct' + (o.signedIn && !failed ? '' : ' expired') + (a.next ? ' next' : '') + '" data-account="' + esc((a && a.account) || '') + '">' +
       '<span class="conn-dot"></span>' +
       '<div class="key-main">' +
         '<div class="key-top"><span class="key-prov">' + esc(label) + (i === 0 ? ' · DEFAULT' : '') + '</span>' +
-        '<code class="key-mask">' + esc(o.signedIn ? (a.email || 'signed in') : (o.outMask || 'not signed in')) + '</code></div>' +
-        '<div class="key-meta">' + state + (o.plan ? '<span class="key-stat">' + esc(o.plan) + '</span>' : '') +
+          (plan && o.signedIn ? '<span class="acct-plan">' + esc(plan) + '</span>' : '') +
+          (a.next ? '<span class="acct-next" title="runs start on this account under the station rule">▶ RUNS NEXT</span>' : '') +
+        '</div>' +
+        '<code class="key-mask">' + esc(o.signedIn ? (a.email || 'signed in') : (o.outMask || 'not signed in')) + '</code>' +
+        '<div class="key-meta">' + state +
           (dupAt >= 0 && dupAt < i ? '<span class="key-stat bad">⚠ SAME ACCOUNT AS ' + esc(String(all[dupAt].label || '').toUpperCase()) + ' — ADDS NO USAGE</span>' : '') +
         '</div>' +
+        usage +
       '</div>' +
       (i === 0 ? '' : '<div class="key-acts">' +
-        (!o.signedIn ? '<button class="bb sm" data-act="' + o.signInAct + '" aria-label="Sign in ' + esc(label) + '">⏼ SIGN IN</button>' : '') +
+        (canSignIn ? '<button class="bb sm" data-act="' + o.signInAct + '" aria-label="Sign in ' + esc(label) + '">⏼ SIGN IN</button>' : '') +
         '<button class="bb sm danger" data-act="' + o.removeAct + '" aria-label="Remove ' + esc(label) + '">✕ REMOVE</button>' +
       '</div>') +
     '</div>';
+  }
+  // the line under every accounts block: what the station does with several sign-ins, in the rule's own words
+  function stackHint(name, many) {
+    const best = (acctRuleState.rule || 'best') === 'best';
+    if (!many) return 'connect more ' + esc(name) + ' accounts — when one hits its usage limit, runs continue on the next';
+    return best ? 'runs start on the account with the most usage left; when one hits its limit they continue on the others'
+      : 'runs start on the first ready account; when one hits its limit they continue on the others';
+  }
+  /* ACCOUNT CHOICE — the station rule for a provider with several sign-ins (/api/accounts/choice). A character can
+     choose its own in its dossier → MODEL. Read with the provider cards; a click saves it on the station. */
+  const acctRuleState = { rule: null, at: 0, pending: false, saving: false };
+  function refreshAccountRule(force) {
+    if (acctRuleState.pending || typeof fetch !== 'function' || (!force && acctRuleState.rule && Date.now() - acctRuleState.at < 30000)) return;
+    acctRuleState.pending = true;
+    fetch('/api/accounts/choice', { cache: 'no-store' }).then(r => r.ok ? r.json() : null)
+      .then(j => { if (j && (j.rule === 'best' || j.rule === 'order')) { const changed = j.rule !== acctRuleState.rule; acctRuleState.rule = j.rule; if (changed) scheduleSettingsRepaint(); } })
+      .catch(() => {})
+      .finally(() => { acctRuleState.pending = false; acctRuleState.at = Date.now(); });
+  }
+  function accountRuleHtml() {
+    const rule = acctRuleState.rule || 'best';
+    const chip = (id, label, desc) => '<button type="button" class="ov-vchip acct-rule-chip' + (rule === id ? ' sel' : '') + '" data-acct-rule="' + id + '" aria-pressed="' + (rule === id) + '"' + (acctRuleState.saving ? ' disabled' : '') + '>' +
+      '<span class="acct-rule-k">' + label + '</span><span class="acct-rule-d">' + desc + '</span></button>';
+    return '<div class="acct-rule">' +
+      '<div class="ov-vchips acct-rule-chips" role="group" aria-label="Which account a run starts on">' +
+        chip('best', 'BEST AVAILABLE', 'the account with the most usage left — a bigger plan counts for more') +
+        chip('order', 'IN ORDER', 'the first connected account that is ready') +
+      '</div>' +
+      '<p class="set-about">For a provider with more than one signed-in account. Either way, an account that hits its usage limit rests until it resets and runs continue on the others. A character can choose its own rule in its dossier → MODEL.</p>' +
+    '</div>';
+  }
+  function setStationAccountRule(rule) {
+    if (acctRuleState.saving || rule === acctRuleState.rule || (rule !== 'best' && rule !== 'order')) return;
+    acctRuleState.saving = true; sfx('click');
+    fetch('/api/accounts/choice', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rule }) })
+      .then(r => r.json().then(j => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => {
+        if (!ok || !j || j.rule !== rule) throw new Error((j && j.error) || 'the account rule was not saved');
+        acctRuleState.rule = j.rule; acctRuleState.at = Date.now();
+        notify(rule === 'best' ? '✓ runs start on the account with the most usage left' : '✓ runs start on the first ready account', 'good');
+        refreshClaudeCliCard(true); STACKABLE_OAUTH.forEach(pid => refreshOAuthAccounts(pid, true));
+      })
+      .catch(err => { notify('✕ ' + ((err && err.message) || 'could not save the account rule'), 'bad'); sfx('bad'); })
+      .finally(() => { acctRuleState.saving = false; rerender('settings'); });
   }
   function oauthAccountsHtml(pid) {
     const st = oauthAcctState(pid);
@@ -4492,7 +4637,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     const all = j.accounts, extras = all.slice(1);
     if (!all[0].connected && !extras.length && !st.box) return '';   // nothing signed in yet: the card's own ⏼ SIGN IN is the door
     const isIn = x => !!x.connected;
-    const rows = extras.length ? all.map((a, i) => stackRowHtml(a, i, all, {
+    const rows = all.some(isIn) ? all.map((a, i) => stackRowHtml(a, i, all, {
       signedIn: isIn(a), isIn, outLabel: a.expired ? '⚠ SIGN-IN EXPIRED' : '○ NOT SIGNED IN', outMask: a.expired ? 'sign in again' : '',
       signInAct: 'prov-oauth-acct-signin', removeAct: 'prov-oauth-acct-remove' })).join('') : '';
     const flowing = OAuthAccounts.for(pid).active();
@@ -4507,9 +4652,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     return '<div class="prov-accounts">' + rows + box +
       '<div class="prov-accounts-add">' +
         (canAdd ? '<button class="bb sm" data-act="prov-oauth-acct-add" title="sign in another ' + esc(provName(pid)) + ' account">＋ ADD ACCOUNT</button>' : '') +
-        '<span class="dim">' + (extras.length
-          ? 'runs start on the first ready account; when it hits its usage limit they continue on the next'
-          : 'connect more ' + esc(provName(pid)) + ' accounts — when one hits its usage limit, runs continue on the next') + '</span>' +
+        '<span class="dim">' + stackHint(provName(pid), extras.length > 0) + '</span>' +
       '</div>' +
     '</div>';
   }
@@ -4520,19 +4663,17 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     const extras = claudeAccounts || [];
     const all = [claudeCliSt].concat(extras);
     const isIn = x => !!(x && x.loggedIn);
-    const row = (a, i) => stackRowHtml(a, i, all, { signedIn: isIn(a), isIn, plan: isIn(a) ? claudeCliPlan(a).replace(/^ · /, '') : '',
+    const row = (a, i) => stackRowHtml(a, i, all, { signedIn: isIn(a), isIn, plan: isIn(a) ? (claudeCliPlan(a).replace(/^ · /, '') || a.plan || '') : '',
       signInAct: 'prov-claude-acct-signin', removeAct: 'prov-claude-acct-remove' });
     const flowing = !!claudeCard.account && typeof ClaudeCliSignIn !== 'undefined' && ClaudeCliSignIn.active();
     const box = claudeCard.account ? claudeFlowBoxHtml(flowing, flowing || !!claudeCard.msg, true) : '';
     const canAdd = !flowing && 1 + extras.length < claudeAccountsMax;
     return '<div class="prov-accounts">' +
-      (extras.length ? all.map(row).join('') : '') +
+      (all.some(isIn) ? all.map(row).join('') : '') +
       box +
       '<div class="prov-accounts-add">' +
         (canAdd ? '<button class="bb sm" data-act="prov-claude-add" title="sign in another Claude account — Claude Code keeps each sign-in, StarNet never sees them">＋ ADD ACCOUNT</button>' : '') +
-        '<span class="dim">' + (extras.length
-          ? 'runs start on the first ready account; when it hits its usage limit they continue on the next'
-          : 'connect more Claude accounts — when one hits its usage limit, runs continue on the next') + '</span>' +
+        '<span class="dim">' + stackHint('Claude', extras.length > 0) + '</span>' +
       '</div>' +
     '</div>';
   }
@@ -4540,6 +4681,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
     const h = H(); if (!h) return;
     refreshClaudeCliCard(false);
     STACKABLE_OAUTH.forEach(pid => refreshOAuthAccounts(pid, false));
+    refreshAccountRule(false);
     for (const p of PROVIDERS) {
       const credentialSaved = !!(h.hasStoredCredential && h.hasStoredCredential(p.id));
       const endpointConfigured = p.id === 'ollama' || p.id === 'claude-cli' || (p.id === 'custom' && !!(h.getBaseUrl && h.getBaseUrl(p.id)));
@@ -4631,8 +4773,9 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       // the no-generation probe. Selection plus a model id is not evidence that a run can leave the station.
       // CLAUDE CODE has no key to verify: its sign-in is proven by the CLI (claudeCliSt) and its catalog by the probe
       const runnable = !!(health && health.reachable && (health.credentialVerified || (p.id === 'claude-cli' && claudeCliSt && claudeCliSt.loggedIn)) && p.id === active && h && h.getModel && h.getModel());
-      const claudeIn = p.id === 'claude-cli' && !!(claudeCliSt && claudeCliSt.loggedIn);
-      const cls = codexDead ? 'avail expired' : ((p.id === 'claude-cli' ? claudeIn : configured) ? 'conn' : (p.live ? 'avail' : 'soon'));
+      const claudeIn = p.id === 'claude-cli' && !!(claudeCliSt && claudeCliSt.loggedIn && !claudeCliSt.authFailed);
+      const claudeExpired = p.id === 'claude-cli' && !!(claudeCliSt && claudeCliSt.loggedIn && claudeCliSt.authFailed);
+      const cls = (codexDead || claudeExpired) ? 'avail expired' : ((p.id === 'claude-cli' ? claudeIn : configured) ? 'conn' : (p.live ? 'avail' : 'soon'));
       // E5: `connected` is KEY PRESENCE, not a verified live connection — a saved key can be revoked,
       // rate-limited, or wrong, and we haven't round-tripped it. Label it "KEY SAVED" (or SIGNED IN for
       // the codex OAuth path, which IS real auth) rather than the over-claiming "CONNECTED". The
@@ -4644,8 +4787,9 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       const keyStat = health === undefined ? connLabel + ' · CHECKING…'
         : health && health.credentialVerified ? connLabel + ' · VERIFIED' : health && health.reachable ? connLabel + ' · NOT VERIFIED' : connLabel + ' · CHECK FAILED';
       const isClaude = p.id === 'claude-cli';
-      const claudeStat = claudeCliSt === undefined ? '◐ CHECKING CLAUDE CODE…' : claudeCliSt === null ? '○ COULDN’T CHECK CLAUDE CODE'
+      const claudeStat = claudeCliSt === undefined ? '◐ CHECKING…' : claudeCliSt === null ? '◌ STATUS UNAVAILABLE · RETRYING'
         : !claudeCliSt.installed ? '○ CLAUDE CODE NOT INSTALLED' : !claudeCliSt.loggedIn ? '○ NOT SIGNED IN'
+        : claudeCliSt.authFailed ? '⚠ SIGN-IN EXPIRED — SIGN IN AGAIN'
         : '● SIGNED IN' + claudeCliPlan(claudeCliSt);
       const stat = !p.live ? '○ COMING SOON' : codexDead ? '⚠ SIGN-IN EXPIRED — RECONNECT'
         : isClaude ? claudeStat : keyless ? localStat : credentialSaved ? keyStat : (isOAuthProvider(p.id) ? '○ NOT SIGNED IN' : (p.id === 'custom' ? '○ NO ENDPOINT' : '○ NO KEY'));
@@ -4659,7 +4803,9 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       // without it the row reads NOT SIGNED IN with zero recovery (the 2026-07-21 user-reported escape).
       // The ⏼ RE-SIGN-IN row below can't cover it: that row only exists once a live/known-dead sign-in exists.
       const wantsOAuthSignin = p.live && isOAuthProvider(p.id) && !credentialSaved && !codexDead;
-      const wantsClaudeSignin = p.id === 'claude-cli' && !!(claudeCliSt && claudeCliSt.installed && !claudeCliSt.loggedIn);
+      // SIGN IN is offered like every other sign-in: signed out, a sign-in that failed for real, or a status the station
+      // could not answer this moment (the sign-in itself then says what is wrong)
+      const wantsClaudeSignin = p.id === 'claude-cli' && (claudeCliSt === null || !!(claudeCliSt && claudeCliSt.installed && (!claudeCliSt.loggedIn || claudeCliSt.authFailed)));
       const wantsClaudeInstall = p.id === 'claude-cli' && !!(claudeCliSt && !claudeCliSt.installed);
       const claudeFlowing = wantsClaudeSignin && !claudeCard.account && typeof ClaudeCliSignIn !== 'undefined' && ClaudeCliSignIn.active();
       const claudeBox = wantsClaudeSignin && (claudeFlowing || (claudeCard.failed && !!claudeCard.msg));
@@ -4687,7 +4833,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
             '</div>'
           : '') +
         (wantsClaudeSignin && !claudeCard.account ? claudeFlowBoxHtml(claudeFlowing, claudeBox) : '') +
-        (isClaude && claudeCliSt && claudeCliSt.installed ? claudeAccountsHtml() : '') +
+        (isClaude && claudeCliSt && claudeCliSt.installed && claudeCliSt.loggedIn ? claudeAccountsHtml() : '') +
         (STACKABLE_OAUTH.indexOf(p.id) >= 0 ? oauthAccountsHtml(p.id) : '') +
         (wantsOAuthSignin
           ? '<div class="key-edit codex-inline prov-oauth-inline" id="prov-oauth-inline-' + esc(p.id) + '" hidden>' +
@@ -5175,6 +5321,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
         rerender('settings');
       });
     };
+    body.querySelectorAll('[data-acct-rule]').forEach(b => b.addEventListener('click', () => setStationAccountRule(b.dataset.acctRule)));
     body.querySelectorAll('.prov-card[data-provider]').forEach(card => {
       const activate = () => {
         const h = H();
@@ -5223,7 +5370,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
         sfx('click');
         const r = await ClaudeCliSignIn.submitCode(code);
         if (r.ok && claudeCodeIn) claudeCodeIn.value = '';
-        claudeCard.msg = r.ok ? 'checking the code with Claude…' : r.error;
+        claudeCard.msg = r.ok ? 'Checking the code with Claude…' : r.error;
         paintClaudeCard();
       };
       const claudeCancel = card.querySelector('#prov-claude-cancel');
@@ -5253,11 +5400,15 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
         const started = ClaudeCliSignIn.start({
           onPending: pend => {
             if (opts.add || opts.account) claudeCard.account = pend.account || claudeCard.account;
-            claudeCard.msg = opts.add || opts.account
-              ? 'in the browser window Claude Code just opened, sign in with a DIFFERENT Claude account — if it goes straight through, switch accounts on claude.ai first'
-              : 'finish signing in in the browser window Claude Code just opened…';
             claudeCard.url = pend.url || '';
-            rerender('settings');   // the box (CANCEL, paste-a-code) renders from the now-active flow
+            // the station runs on a server: Claude Code cannot open a browser there, so open its sign-in page here
+            const here = !pend.opensBrowser && !!claudeCard.url;
+            if (here) openExternal(claudeCard.url);
+            const where = here ? 'Sign in on the Claude page that just opened in your browser' : 'Finish signing in in the browser window Claude Code opened';
+            claudeCard.msg = (opts.add || opts.account)
+              ? where + ' with a DIFFERENT Claude account (switch accounts on claude.ai first if it goes straight through). If Claude shows a code, paste it here.'
+              : where + '. If Claude shows a code, paste it here.';
+            rerender('settings');   // the box (paste-a-code, OPEN, CANCEL) renders from the now-active flow
           },
           onError: msg => {
             claudeCard.msg = msg; claudeCard.url = ''; claudeCard.failed = true;
@@ -6342,6 +6493,7 @@ const StationUI = typeof document === 'undefined' ? {} : (() => {
       // NB: no inner "PROVIDERS" heading — the console section head already prints PROVIDERS above the pane
       // (a second identical h4 read as a duplicated title in sys-settings.png).
       '<div class="prov-list">' + providersHtml('models') + '</div>' +
+      '<h4 class="ms-h">ACCOUNT CHOICE</h4>' + accountRuleHtml() +
       '<h4 class="ms-h">API KEYS</h4>' +
       '<div class="key-list">' + keysHtml('models') + '</div>' +
       '<p class="set-about">Credentials are saved locally and used to authenticate with the selected service. Saved keys stay masked. Desktop storage uses the OS keychain when available.</p>' +

@@ -534,6 +534,7 @@
     // Injected wall clock (determinism law). Without one, a proven sign-in is kept for this instance's life
     // and a failed probe is never cached — the factory builds a fresh adapter per request anyway.
     const clock = (opts.clock && typeof opts.clock.now === 'function') ? opts.clock : null;
+    const onUsage = typeof opts.onUsage === 'function' ? opts.onUsage : null;   // rate_limit_event sink (account choice)
     let status = null, statusAt = 0, statusPromise = null;
     let seq = 0;
     // tool-call ids are unique per ADAPTER, not just per turn: the factory builds a fresh adapter per request (and per
@@ -678,6 +679,10 @@
           else if (j.type === 'stream_event' && j.event && j.event.type === 'message_delta' && j.event.usage) streamUsage = Object.assign(streamUsage || {}, j.event.usage);
           else if (j.type === 'assistant' && j.error) apiError = String(j.error);
           else if (j.type === 'result') result = j;
+          else if (j.type === 'rate_limit_event' && onUsage && j.rate_limit_info && typeof j.rate_limit_info === 'object') {
+            // the account's subscription windows (utilization, reset, rejected) — the station ranks accounts by them
+            try { onUsage(j.rate_limit_info); } catch (e) { failNote('claudecli.onusage', e); }
+          }
         }
         if (signal && signal.aborted) return;
         const usageChunk = () => {

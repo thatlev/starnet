@@ -57,21 +57,45 @@
 .settings-console .settings-toggle-row:has(input:disabled) { opacity: .55; cursor: default; }
 .settings-console :is(button,input,select,textarea):focus-visible { outline: 2px solid var(--ph); outline-offset: 3px; }
 .settings-console .prov-list { display: grid; gap: 12px; container: settings-providers / inline-size; }
-.settings-console .prov-card { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 14px; border: 1px solid rgba(var(--ph-rgb), .2); border-radius: 10px; background: rgba(var(--ph-rgb), .025); box-shadow: none; animation: none; }
+.settings-console .prov-card { --prov-r: 10px; --prov-pad: 14px; --prov-inner-r: max(0px, calc(var(--prov-r) - var(--prov-pad) - 1px)); display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 10px; padding: var(--prov-pad); border: 1px solid rgba(var(--ph-rgb), .2); border-radius: var(--prov-r); background: rgba(var(--ph-rgb), .025); box-shadow: none; animation: none; }
 .settings-console .prov-select { min-width: 0; padding: 0; display: grid; grid-template-columns: 10px minmax(0,1fr); gap: 8px 10px; text-align: left; align-items: start; background: transparent; border: 0; }
 .settings-console .prov-name { font-size: 19px; line-height: 1.3; }
 .settings-console .prov-ep { display: block; white-space: normal; overflow-wrap: anywhere; font-size: 13px; line-height: 1.45; margin-top: 4px; }
 .settings-console .prov-stat { grid-column: 2; padding: 0; text-align: left; font-size: 12px; }
 .settings-console .prov-stat-t { font-size: 12px; line-height: 1.4; }
 .settings-console .prov-key-edit, .settings-console .prov-oauth-inline { grid-column: 1 / -1; }
-/* subscription stacking: the CLAUDE CODE card's connected sign-ins + ＋ ADD ACCOUNT, full width under the card head */
-.settings-console .prov-accounts { grid-column: 1 / -1; display: grid; gap: 8px; margin-top: 4px; }
-.settings-console .prov-accounts .key-row { padding: 10px 12px; background: rgba(0,0,0,.12); flex-wrap: wrap; }
-.settings-console .prov-accounts .key-main { flex: 1 1 160px; }
-.settings-console .prov-accounts .key-mask { max-width: 100%; overflow-wrap: anywhere; }
-.settings-console .prov-accounts .key-acts { flex-direction: row; margin-left: auto; }
+/* subscription stacking: a card's connected sign-ins + ＋ ADD ACCOUNT, full width under the card head. The rows are a
+   flat list divided by hairlines — no boxes nested in the card. Anything inside the card that does draw a surface (the
+   sign-in and key editors) takes the concentric radius: card radius − (padding + border), floored at 0. */
+.settings-console .prov-accounts { grid-column: 1 / -1; display: grid; gap: 0; margin-top: 4px; }
+.settings-console .prov-accounts .key-row { padding: 12px 0; background: transparent; flex-wrap: wrap; border: 0; border-top: 1px solid rgba(var(--ph-rgb), .14); border-radius: 0; box-shadow: none; align-items: flex-start; }
+.settings-console .prov-accounts .key-row > .conn-dot { margin-top: 7px; }
+.settings-console .prov-accounts .key-main { flex: 1 1 220px; display: grid; gap: 4px; }
+.settings-console .prov-accounts .key-top { gap: 6px 10px; }
+.settings-console .prov-accounts .key-mask { justify-self: start; max-width: 100%; overflow-wrap: anywhere; }
+.settings-console .prov-accounts .key-acts { flex-direction: row; margin-left: auto; align-self: center; }
 .settings-console .prov-accounts .key-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; }
-.settings-console .prov-accounts-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 13px; line-height: 1.4; }
+.settings-console .prov-accounts-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 13px; line-height: 1.4; padding-top: 12px; border-top: 1px solid rgba(var(--ph-rgb), .14); }
+.settings-console .prov-accounts > .key-edit + .prov-accounts-add, .settings-console .prov-accounts > .prov-accounts-add:first-child { border-top: 0; }
+.settings-console .acct-plan { font-size: 11px; letter-spacing: 1px; line-height: 1; padding: 3px 8px; border: 1px solid rgba(var(--ph-rgb), .45); border-radius: 999px; color: var(--ph-bright); }
+.settings-console .acct-next { font-size: 11px; letter-spacing: 1px; color: var(--ok); }
+.settings-console .acct-usage { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 2px; }
+.settings-console .acct-meter { position: relative; flex: 0 0 clamp(80px, 30%, 160px); height: 6px; border-radius: 3px; overflow: hidden; background: rgba(var(--ph-rgb), .16); }
+.settings-console .acct-meter::after { content: ''; position: absolute; inset: 0 auto 0 0; width: var(--used, 0%); border-radius: inherit; background: var(--ph); }
+.settings-console .acct-meter.hot::after { background: var(--bad); }
+.settings-console .acct-usage-t { font-size: 12px; letter-spacing: .6px; color: var(--ph-dim); }
+.settings-console .prov-card .key-edit:not([hidden]) { border-radius: var(--prov-inner-r); }
+/* the Claude sign-in: what to do, the code field with its CONNECT, then OPEN / CANCEL */
+.settings-console .prov-claude-inline:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.settings-console .prov-signin-msg { font-size: 14px; line-height: 1.5; color: var(--text); }
+.settings-console .prov-signin-code { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-console .prov-signin-code input { flex: 1 1 220px; }
+.settings-console .prov-signin-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+/* ACCOUNT CHOICE: two wide choices, each saying what it does */
+.settings-console .acct-rule-chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.settings-console .acct-rule-chip { display: grid; gap: 5px; text-align: left; align-content: start; }
+.settings-console .acct-rule-k { font-size: 14px; letter-spacing: 1px; color: var(--ph-bright); }
+.settings-console .acct-rule-d { font-size: 13px; line-height: 1.45; color: var(--text); letter-spacing: 0; }
 .settings-console .key-edit:not([hidden]) { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px; border-radius: 8px; background: rgba(0,0,0,.16); }
 .settings-console .key-edit input { flex: 1 1 200px; }
 .settings-console .key-row { padding: 14px; gap: 12px; border-radius: 9px; border-color: rgba(var(--ph-rgb), .2); box-shadow: none; }

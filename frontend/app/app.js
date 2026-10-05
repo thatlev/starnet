@@ -545,6 +545,22 @@ const App = (() => {
     return true;
   }
 
+  // ACCOUNT RULE (per character): which connected sign-in this agent's runs start on when a provider has several —
+  // '' follows the station rule (Settings → PROVIDERS → ACCOUNT CHOICE), 'best', 'order' or 'prefer:<provider>:<account>'.
+  // The roster POST is the authority (runOnce reads it for every run, headless ones too); a refused push reverts.
+  function setAgentAccountRule(agentId, rule) {
+    const a = agents.get(String(agentId || '')) || (agent && agent.id === agentId ? agent : null);
+    const next = String(rule || '').trim().toLowerCase();
+    if (!a || !/^(|best|order|prefer:(claude-cli|codex|grok|kimi):(primary|[a-f0-9]{8,32}))$/.test(next)) return Promise.resolve(false);
+    const before = a.accountRule || '';
+    a.accountRule = next;
+    return Promise.resolve(pushRoster()).then(ok => {
+      if (!ok) { a.accountRule = before; persist(); return false; }
+      persist();
+      return true;
+    }).catch(() => { a.accountRule = before; persist(); return false; });
+  }
+
   // Execution profile is runtime/capability/filesystem scope only. It never changes approvalMode and never
   // grants the physical-desktop lease. The roster POST is the backend authority; local save keeps the control
   // stable across a renderer reload while the sidecar mirror provides restart durability.
@@ -876,7 +892,7 @@ const App = (() => {
   }
   // the persisted shape of a crew member (systemPrompt is derived, recomposed on rehydrate).
   function serializeAgentLite(a) {
-    return { id: a.id, name: a.name, color: a.color, skin: a.skin || DATA.DEFAULT_SKIN, model: a.model, provider: a.provider || null, reasoningEffort: a.reasoningEffort || null, personaId: a.personaId,
+    return { id: a.id, name: a.name, color: a.color, skin: a.skin || DATA.DEFAULT_SKIN, model: a.model, provider: a.provider || null, reasoningEffort: a.reasoningEffort || null, accountRule: a.accountRule || '', personaId: a.personaId,
              role: a.role || (a.id === 'agent' ? 'orchestrator' : 'specialist'), voiceTraits: a.voiceTraits || null, customVoice: a.customVoice || '',
              approvalMode: a.approvalMode || 'ask', executionProfile: executionProfileOf(a), workshop: !!a.workshop, purpose: a.purpose || null, specialtyId: a.specialtyId || null, docs: a.docs,
              skills: Array.isArray(a.skills) ? a.skills.slice() : [],   // Class Loadouts S1: per-agent skill package persists
@@ -890,6 +906,7 @@ const App = (() => {
       if (!s || !s.id || s.id === 'agent' || agents.has(s.id)) continue;   // hero already registered; skip dups (so the 'specialist' default below is always correct here — the orchestrator never routes through this path)
       const a = { id: s.id, name: s.name, color: s.color, skin: s.skin || DATA.DEFAULT_SKIN, model: s.model || (agent && agent.model),
                   provider: s.provider || (agent && agent.provider) || null, reasoningEffort: s.reasoningEffort || (agent && agent.reasoningEffort) || null,   // #4: per-agent provider+effort (fall back to the hero's)
+                  accountRule: typeof s.accountRule === 'string' ? s.accountRule : '',   // the character's own account rule ('' = station rule)
                   personaId: (typeof Personas !== 'undefined' ? Personas.resolve(s.personaId) : s.personaId), role: s.role || 'specialist', voiceTraits: s.voiceTraits || null, customVoice: s.customVoice || '',
                   approvalMode: s.approvalMode || 'ask', executionProfile: executionProfileOf(s), workshop: !!s.workshop, purpose: s.purpose || null, specialtyId: s.specialtyId || null,
                   skills: Array.isArray(s.skills) ? s.skills.slice() : [],   // Class Loadouts S1: restore the per-agent skill package
@@ -1392,7 +1409,8 @@ const App = (() => {
       const list = liveAgents().map(a => ({ agentId: a.id, system: a.systemPrompt || '', name: a.name || a.id, model: a.model || '', provider: a.provider || fallbackProv, role: rosterRole(a), approvalMode: (a.approvalMode === 'full' ? 'full' : 'ask'), executionProfile: executionProfileOf(a),
         track: rosterTrack(a),    // S3: this agent's EARNED track record, so the lead's dispatch briefing can pick on evidence (see rosterTrack)
         workshop: !!a.workshop,   // W3: the away-build grant travels with the roster so the consent broker can honor it
-        skills: Array.isArray(a.skills) ? a.skills : [], reasoningEffort: a.reasoningEffort || null }));   // #4: each agent's OWN provider; Class Loadouts S1: per-agent skill package + applied effort
+        skills: Array.isArray(a.skills) ? a.skills : [], reasoningEffort: a.reasoningEffort || null,
+        accountRule: a.accountRule || '' }));   // which connected sign-in its runs start on ('' = the station rule) · #4: each agent's OWN provider; Class Loadouts S1: per-agent skill package + applied effort
       // P1.1 (UPDATE_STATE_SAFETY_AUDIT): stamp a freshness `updatedAt` so the sidecar can refuse a STALE push (a
       // background tab / out-of-sync frontend whose roster is older than what the store already accepted). The
       // sidecar records the stamp of the last accepted write and 200s { ok:false, stale:true } on an older one;
@@ -2259,7 +2277,11 @@ const App = (() => {
       paintClaudeCli('error', '○ ' + (j.error || 'Claude sign-in failed') ); return;
     }
     claudeCliFlow = { login_id: j.login_id, url: j.url || '' };
-    paintClaudeCli('signing', '◐ finish signing in in the browser window Claude Code just opened…');
+    // a station on a server: Claude Code cannot open a browser there, so this window opens the page it printed
+    if (j.opensBrowser === false && j.url) openExternalUrl(j.url);
+    paintClaudeCli('signing', j.opensBrowser === false
+      ? '◐ sign in on the Claude page that just opened, then paste the code it shows below…'
+      : '◐ finish signing in in the browser window Claude Code just opened…');
     pollClaudeCli();
   }
   function pollClaudeCli() {
@@ -3194,7 +3216,7 @@ const App = (() => {
             : Harness.contextState(agent ? agent.id : 'agent');
         },
         activity: () => (World.getActivity ? World.getActivity() : 'idle'),
-        config: { apply: applyAgentConfig, setModel: setAgentModelPin, setPersona: setAgentPersona, setName: setAgentName, setWorkshop: setAgentWorkshop, setApproval: setAgentApproval, setExecutionProfile: setAgentExecutionProfile, setSkin: setAgentSkin, deleteAgent: deleteAgent, crewCount: () => agents.size },   // approval posture and execution profile are independent controls; both persist through the roster
+        config: { apply: applyAgentConfig, setModel: setAgentModelPin, setPersona: setAgentPersona, setName: setAgentName, setWorkshop: setAgentWorkshop, setApproval: setAgentApproval, setExecutionProfile: setAgentExecutionProfile, setAccountRule: setAgentAccountRule, setSkin: setAgentSkin, deleteAgent: deleteAgent, crewCount: () => agents.size },   // approval posture and execution profile are independent controls; both persist through the roster
         comms: { openWorkstream: openWorkstream }   // the while-you're-away card's "review" jumps straight to a deliverable's session (2026-07-15)
       });
       // Presence is already proven by the live roster, link indicator, and COMMS state. Do not

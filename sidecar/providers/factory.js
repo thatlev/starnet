@@ -190,7 +190,8 @@
     if (profile.adapter === 'claude-cli') {
       // A local child process, not HTTP: no fetch/key/baseUrl — the CLI's own sign-in is the credential.
       // configDir = an extra connected account (subscription stacking); absent = the CLI's default sign-in.
-      return claudeCli.makeClaudeCliProvider({ clock: opts.clock, configDir: opts.configDir || undefined });
+      // onUsage = the station's per-account usage record (account-choice.js): the CLI's rate_limit_event, verbatim.
+      return claudeCli.makeClaudeCliProvider({ clock: opts.clock, configDir: opts.configDir || undefined, onUsage: typeof opts.onUsage === 'function' ? opts.onUsage : undefined });
     }
     throw new Error('provider adapter is not wired: ' + profile.adapter);
   }

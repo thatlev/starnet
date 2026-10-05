@@ -87,6 +87,7 @@ const RunRecovery = require('./run-recovery.js');
 const { makeSegmentedTranscriptIo } = require('./transcript-history.js');
 const { makeSkillStore } = require('./skillstore.js');             // H4: per-agent owned skill library (singleton)
 const { makeCredPool } = require('./credpool.js');
+const AccountChoice = require('./account-choice.js');   // which connected sign-in a run starts on (subscription stacking)
 const { resolveTools } = require('./capability/resolve.js');
 const { CAP_REGISTRY } = require('./capability/registry.js');
 const { toolsetRows, toggleableCaps } = require('./capability/toolsets.js');   // TOOLSETS console: capId families derived from CAP_REGISTRY
@@ -1420,6 +1421,52 @@ const credPool = makeCredPool({ clock: { now: () => Date.now() } });
 // subscription? }) from a real status probe — a run skips an account proven signed out, never one merely unknown.
 const providerAccounts = require('./provider-accounts.js').makeProviderAccounts({ root: path.join(WORKSPACES, '.secrets', 'accounts') });
 const accountAuthSeen = new Map();
+/* ACCOUNT CHOICE (account-choice.js): the ORDER of a stacked provider's accounts — the station rule (Settings →
+   Providers: best available or in order) or a character's own rule from the roster — and what each account is known
+   to have left: its plan, its usage windows (ChatGPT's usage report, Claude Code's rate-limit events), a usage-limit
+   rest and a failed sign-in. Persisted beside the roster (no credential in it; keys are opaque account handles). */
+const accountChoice = AccountChoice.makeAccountChoice({ clock: { now: () => Date.now() } });
+const ACCOUNT_CHOICE_FILE = path.join(WORKSPACES, 'account.choice.json');
+let stationAccountRule = { mode: 'best' };
+(function loadAccountChoice() {
+  try {
+    const raw = loadResilient(ACCOUNT_CHOICE_FILE, 'account-choice');
+    if (!raw || typeof raw !== 'object') return;
+    const rule = AccountChoice.normalizeRule(raw.rule);
+    if (rule && rule.mode !== 'prefer') stationAccountRule = rule;
+    accountChoice.restore(raw.usage);
+  } catch (e) { failNote('accountchoice.load', e); }
+})();
+function accountKeyOf(providerId, accountId) { return 'account:' + providerId + ':' + (accountId || 'primary'); }
+function accountKeyExists(key) {
+  const m = /^account:([a-z-]+):(.+)$/.exec(String(key || ''));
+  if (!m) return false;
+  return m[2] === 'primary' || providerAccounts.list(m[1]).some(a => a.id === m[2]);
+}
+function saveAccountChoice() {
+  saveResilient(ACCOUNT_CHOICE_FILE, { version: 1, rule: AccountChoice.ruleString(stationAccountRule), usage: accountChoice.snapshot(accountKeyExists) });
+}
+let accountChoiceSaveTimer = null;
+function scheduleAccountChoiceSave() {
+  if (accountChoiceSaveTimer) return;
+  accountChoiceSaveTimer = setTimeout(() => {
+    accountChoiceSaveTimer = null;
+    try { saveAccountChoice(); } catch (e) { failNote('accountchoice.save', e); }
+  }, 1500);
+  if (accountChoiceSaveTimer.unref) accountChoiceSaveTimer.unref();
+}
+function noteAccountChoice(key, patch) {
+  if (accountChoice.note(key, patch)) scheduleAccountChoiceSave();
+}
+// a sign-in just completed: whatever made the account rest or fail before no longer describes it
+function noteFreshSignIn(providerId, accountId) {
+  const key = accountKeyOf(providerId, accountId);
+  credPool.forgive(key);
+  noteAccountChoice(key, { authFailed: false, limited: false });
+}
+function forgetAccountChoice(providerId, accountId) {
+  if (accountChoice.forget(accountKeyOf(providerId, accountId))) scheduleAccountChoiceSave();
+}
 
 const runs = new Map();          // runId -> AbortController (the kill path)
 // RECONCILIATION snapshot metadata: runId -> { agentId, startedAt, source }. Populated alongside every runs.set
@@ -1492,7 +1539,10 @@ function replaceAgentRoster(list) {
       // (frontend/app/xp.js credential()). Rendered on the lead's [ORCHESTRATION] dispatch list so delegation
       // is an informed pick, never a gated one. '' for an agent that has proved nothing yet — old rosters
       // without the field load to '' and the briefing stays byte-identical to before.
-      track: String((a && a.track) || '').slice(0, 120)
+      track: String((a && a.track) || '').slice(0, 120),
+      // ACCOUNT CHOICE (additive): this character's rule for which connected sign-in its runs start on — '' follows
+      // the station rule; 'best', 'order' or 'prefer:<provider>:<account>' (account-choice.js normalizes it).
+      accountRule: AccountChoice.ruleString(AccountChoice.normalizeRule(a && a.accountRule))
     });
   }
 }
@@ -1510,7 +1560,7 @@ function loadAgentRoster() {
 // P1.1: the fields saveAgentRoster() rebuilds from the live Map — the KNOWN shape. Preserved unknown fields (any
 // key a newer frontend added that this sidecar doesn't model) are spread UNDER these on save, so they survive a
 // re-save by older code rather than being dropped. agentId is always rebuilt (identity), never preserved raw.
-const ROSTER_KNOWN_FIELDS = ['agentId', 'system', 'name', 'model', 'provider', 'role', 'approvalMode', 'executionProfile', 'skills', 'reasoningEffort', 'track'];
+const ROSTER_KNOWN_FIELDS = ['agentId', 'system', 'name', 'model', 'provider', 'role', 'approvalMode', 'executionProfile', 'skills', 'accountRule', 'reasoningEffort', 'track'];
 // saveAgentRoster(updatedAt?) — persist the live roster. The optional updatedAt is the CLIENT's freshness stamp
 // (from POST /api/roster body.updatedAt); handleRoster passes it after its anti-clobber gate accepts a push, so the
 // stored envelope records the exact stamp we accepted (a later push older than it is refused). Server-internal
@@ -1520,7 +1570,7 @@ function saveAgentRoster(updatedAt) {
   try {
     fs.mkdirSync(WORKSPACES, { recursive: true });
     const agents = [...agentRoster].map(([agentId, a]) => {
-      const known = { agentId, system: a.system || '', name: a.name || agentId, model: a.model || null, provider: a.provider || null, role: a.role || '', approvalMode: (a.approvalMode === 'full') ? 'full' : 'ask', executionProfile: executionProfiles.normalizeId(a.executionProfile, { approvalMode: a.approvalMode, backendId: executionEnvironment && executionEnvironment.backendId }), skills: Array.isArray(a.skills) ? a.skills : [], reasoningEffort: a.reasoningEffort || null, track: a.track || '' };   // S3: track = the earned track-record line (see replaceAgentRoster)   // Class Loadouts S1: per-agent package + execution envelope persist beside approval posture.
+      const known = { agentId, system: a.system || '', name: a.name || agentId, model: a.model || null, provider: a.provider || null, role: a.role || '', approvalMode: (a.approvalMode === 'full') ? 'full' : 'ask', executionProfile: executionProfiles.normalizeId(a.executionProfile, { approvalMode: a.approvalMode, backendId: executionEnvironment && executionEnvironment.backendId }), skills: Array.isArray(a.skills) ? a.skills : [], reasoningEffort: a.reasoningEffort || null, track: a.track || '', accountRule: a.accountRule || '' };   // S3: track = the earned track-record line (see replaceAgentRoster)   // Class Loadouts S1: per-agent package + execution envelope persist beside approval posture.
       // P1.1: forward-compat field preservation — carry any UNKNOWN keys from the last-seen raw record under the
       // known ones, so a field a newer frontend added isn't silently eaten when older sidecar code re-saves.
       const rawRec = agentRosterRaw.get(agentId);
@@ -1552,7 +1602,7 @@ function persistAgentFullAccess(agentId) {
   if (!/^[A-Za-z0-9_-]{1,40}$/.test(id)) return false;
   const had = agentRoster.has(id);
   const previous = agentRoster.get(id);
-  const base = previous || { system: '', name: id, model: null, provider: null, role: '', approvalMode: 'ask', executionProfile: 'station-gear', skills: [], reasoningEffort: null, track: '' };
+  const base = previous || { system: '', name: id, model: null, provider: null, role: '', approvalMode: 'ask', executionProfile: 'station-gear', skills: [], reasoningEffort: null, track: '', accountRule: '' };
   agentRoster.set(id, Object.assign({}, base, { approvalMode: 'full' }));
   if (saveAgentRoster()) return true;
   if (had) agentRoster.set(id, previous); else agentRoster.delete(id);
@@ -9389,6 +9439,9 @@ const ROUTES = [
   { m: 'GET', exact: '/api/auth/claude-cli/accounts', h: (req, res) => handleClaudeCliAuth(req, res, 'accounts') },
   { m: 'POST', exact: '/api/auth/claude-cli/add', h: (req, res) => handleClaudeCliAuth(req, res, 'add') },
   { m: 'POST', exact: '/api/auth/claude-cli/remove', h: (req, res) => handleClaudeCliAuth(req, res, 'remove') },
+  // ACCOUNT CHOICE: the station rule for stacked sign-ins (best available | in order); characters may override it
+  { m: 'GET', exact: '/api/accounts/choice', h: handleAccountChoice },
+  { m: 'POST', exact: '/api/accounts/choice', h: handleAccountChoice },
   { m: 'GET', exact: '/api/providers', h: handleProviders },
   { m: 'POST', exact: '/api/providers/probe', h: handleProviderProbe },
   { m: 'POST', exact: '/api/providers/validate', h: handleProviderValidate },
@@ -15307,6 +15360,9 @@ async function runOnce(o) {
   const identityFallback = !rosterIdent && String(agentId || '') !== '' && String(agentId || '') !== 'agent';
   if (identityFallback) warnRosterMiss(agentId, 'runOnce');
   const providerId = normalizeProvider(o.provider || (rosterIdent && rosterIdent.provider) || '');
+  // ACCOUNT CHOICE: this character's own rule from the roster, else the station rule — which connected sign-in a
+  // stacked provider's run starts on (the others stay in the chain as its fallbacks).
+  const runAccountRule = AccountChoice.normalizeRule(rosterIdent && rosterIdent.accountRule) || stationAccountRule;
   const usingCodex = providerUsesCodex(providerId);
   const usingDeviceOAuth = providerUsesDeviceOAuth(providerId);
   let providerUnmetered = !!((getProviderProfile(providerId) || {}).unmetered);
@@ -16362,7 +16418,9 @@ async function runOnce(o) {
   let provider;
   // SUBSCRIPTION STACKING (ChatGPT / Grok / Kimi): the run opens on the first connected sign-in credPool is not
   // cooling. On the primary, the path below is unchanged; on an extra account, that account's own token keeper.
-  const oauthAccounts = (usingCodex || usingDeviceOAuth) ? orderedAccountChain(providerId) : null;
+  const oauthAccounts = (usingCodex || usingDeviceOAuth) ? orderedAccountChain(providerId, runAccountRule) : null;
+  // keep ChatGPT's usage report fresh for the NEXT choice without holding this run (at most every 5 minutes)
+  if (usingCodex && oauthAccounts) for (const a of oauthAccounts) refreshCodexUsage(a.credKey, 5 * 60 * 1000).catch(swallow('accountchoice.runusage'));
   const openOnExtra = !!(oauthAccounts && oauthAccounts[0].id);
   if (openOnExtra) {
     provider = oauthAccountProvider(providerId, oauthAccounts[0], baseUrl, reasoningEffort);
@@ -16465,14 +16523,13 @@ async function runOnce(o) {
   // run starts on the first account credPool does not have cooling and rotates through the rest when one hits its
   // usage limit — the same rotation slot and cooldown the API-key pool uses, keyed by an opaque account handle.
   if (primaryProfile && primaryProfile.adapter === 'claude-cli') {
-    const chain = accountChain(providerId);
-    const byKey = new Map(chain.map(a => [a.credKey, a]));
-    const ordered = credPool.order(chain.map(a => a.credKey));
-    const onAccount = a => a.id ? selectProvider({ provider: providerId, configDir: a.dir, reasoningEffort }) : selectProvider({ provider: providerId, reasoningEffort });
-    const first = byKey.get(ordered[0]);
+    const ordered = orderedAccountChain(providerId, runAccountRule);
+    // each account's adapter records the usage windows its CLI reports on the stream (rate_limit_event)
+    const onAccount = a => selectProvider(Object.assign({ provider: providerId, reasoningEffort, onUsage: info => noteClaudeUsage(a.credKey, info) }, a.id ? { configDir: a.dir } : {}));
+    const first = ordered[0];
     activePrimaryKey = first.credKey;
-    if (first.id) { provider = onAccount(first); auxVisionProvider = provider; }
-    rotationFallbacks = ordered.slice(1).map(k => { const a = byKey.get(k); return { provider: onAccount(a), providerId, model, credKey: k, account: a.label }; });
+    provider = onAccount(first); auxVisionProvider = provider;
+    rotationFallbacks = ordered.slice(1).map(a => ({ provider: onAccount(a), providerId, model, credKey: a.credKey, account: a.label }));
   }
   if (oauthAccounts && oauthAccounts.length > 1) {
     activePrimaryKey = oauthAccounts[0].credKey;
@@ -16508,6 +16565,9 @@ async function runOnce(o) {
   const fallbacks = rotationFallbacks
     .concat(fallbackModels.map(m => ({ provider, providerId, model: m })))
     .concat(providerFallbacks);
+  // ACCOUNT CHOICE: the connected sign-in the run is on right now (the loop's live credential, followed through
+  // rotations; null once a fallback leaves this provider) — credited when the run finishes.
+  let liveCredKey = (providerUnmetered && !oauthAccounts) ? null : activePrimaryKey;
 
   // ---- context auto-compaction: fold older turns into a summary once the live prompt passes 65% of the model's
   //      window, so a long run shrinks instead of overflowing. The summarizer is ONE model call over the older
@@ -17558,7 +17618,20 @@ async function runOnce(o) {
       // and penalizing the key we never called would cool the wrong credential.
       credKey: (providerUnmetered && !oauthAccounts) ? null : activePrimaryKey,
       onFallback: ({ reason, rotate, credKey, retryAfterMs, resetAtMs, next }) => {
+        // ACCOUNT CHOICE: what this failure says about a connected sign-in outlives the run — a spent allowance rests
+        // the account until its reset (credPool's cooldown caps at an hour; a weekly limit lasts longer), and a sign-in
+        // that failed for real is demoted and shown as needing a new sign-in although its status check passed.
+        if (rotate && typeof credKey === 'string' && credKey.indexOf('account:') === 0) {
+          if (reason === 'auth') noteAccountChoice(credKey, { authFailed: true });
+          else if (reason === 'quota_exhausted') {
+            const until = (typeof resetAtMs === 'number' && resetAtMs > Date.now()) ? resetAtMs
+              : (typeof retryAfterMs === 'number' && retryAfterMs > 0) ? Date.now() + retryAfterMs : 0;
+            noteAccountChoice(credKey, { limited: true, limitedUntil: until });
+          }
+        }
         if (next) {
+          if (next.credKey != null) liveCredKey = next.credKey;
+          if (next.providerId && next.providerId !== providerId) liveCredKey = null;
           provider = next.provider;
           activeProviderId = next.providerId || activeProviderId;
           auxVisionProvider = provider;
@@ -17597,6 +17670,11 @@ async function runOnce(o) {
       approxTokens: Math.ceil(JSON.stringify(msgs).length / 4), contextLimit: provider.contextLimit(model)
     });
     if (result && result.failureStage) execution.recordFailure(result.failureStage, result.failureCode || 'run_failure');
+    // ACCOUNT CHOICE: a run that finished on a connected sign-in proves it signed in and not spent right now
+    if (result && result.reason === 'done' && (Number(result.turns) || 0) > 0 && typeof liveCredKey === 'string' && liveCredKey.indexOf('account:') === 0) {
+      noteAccountChoice(liveCredKey, { authFailed: false, limited: false });
+      if (usingCodex) refreshCodexUsage(liveCredKey, 60 * 1000).catch(swallow('accountchoice.afterrun'));
+    }
     if (imageTask && result && result.reason === 'done') {
       let clarifying = false;
       if (taskBrief && Array.isArray(result.messages)) {
@@ -19629,6 +19707,7 @@ async function handleCodexPoll(req, res) {
     codexTokens = { access_token: creds.access_token, refresh_token: creds.refresh_token, last_refresh: creds.last_refresh, auth_mode: creds.auth_mode };
     codexAuthDead = null;   // a completed device sign-in supersedes any recorded dead-token state (fresh envelope carries no marker)
     saveCodexTokens(codexTokens);
+    noteFreshSignIn('codex', '');
     console.log('  · ChatGPT subscription connected (Codex OAuth) — agents can now run on it');
     json(200, { status: 'connected' });
   } catch (e) {
@@ -19861,6 +19940,7 @@ function handleCodexLogout(req, res) {
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
   if (!clearCodexTokens()) return json(500, { error: 'logout could not be persisted; credentials remain connected', code: 'codex_logout_persist_failed' });
   codexTokens = null;
+  forgetAccountChoice('codex', '');
   json(200, { connected: false });
 }
 
@@ -19916,6 +19996,7 @@ async function handleOAuthPoll(req, res, id) {
     entry.authDead = null;
     saveOAuthTokens(id, entry.tokens);
     entry.pending.delete(login_id);
+    noteFreshSignIn(id, '');
     console.log('  · ' + oauthLabel(id) + ' subscription connected (device OAuth) — agents can now run on it');
     json(200, { status: 'connected' });
   } catch (e) {
@@ -19951,6 +20032,7 @@ function handleOAuthLogout(req, res, id) {
   if (!entry) return json(404, { error: 'unknown provider' });
   if (!clearOAuthTokens(id)) return json(500, { error: 'logout could not be persisted; credentials remain connected', code: 'oauth_logout_persist_failed' });
   entry.tokens = null;
+  forgetAccountChoice(id, '');
   json(200, { connected: false });
 }
 
@@ -19969,6 +20051,7 @@ async function handleOAuthAccounts(req, res, pid, verb) {
   const label = oauthLabel(pid);
   try {
     if (verb === 'accounts') {
+      if (pid === 'codex') await refreshCodexUsageAll(60 * 1000, 3000);   // plan + usage left, at most every minute
       const prim = oauthPrimaryStatus(pid);
       const rows = [Object.assign({ account: '', primary: true, email: accountEmailOf(prim.tokens) }, codexAuthState.statusPayload(prim))];
       for (const a of providerAccounts.list(pid)) {
@@ -19981,7 +20064,9 @@ async function handleOAuthAccounts(req, res, pid, verb) {
         noteAccountAuth(pid, r.account, { installed: true, loggedIn: !!r.connected });
         return Object.assign(r, { label: 'account ' + (i + 1), coolingUntil: credPool.coolingUntil('account:' + pid + ':' + (r.account || 'primary')) || 0 });
       });
-      return json(200, { accounts, max: 1 + providerAccounts.MAX });
+      const order = orderedAccountChain(pid).map(a => a.credKey);
+      for (const a of accounts) Object.assign(a, accountChoiceRow(pid, a.account, order, !!a.connected));
+      return json(200, { accounts, max: 1 + providerAccounts.MAX, rule: AccountChoice.ruleString(stationAccountRule) });
     }
     let body; try { body = JSON.parse((await readBody(req, 1 << 16)) || '{}') || {}; } catch (e) { return json(400, { status: 'error', error: 'bad json' }); }
     const now = Date.now();
@@ -20036,6 +20121,7 @@ async function handleOAuthAccounts(req, res, pid, verb) {
       entry.tokens = tokens; entry.authDead = null;
       saveAccountTokens(entry, entry.tokens);
       noteAccountAuth(pid, acctId, { installed: true, loggedIn: true });
+      noteFreshSignIn(pid, acctId);
       console.log('  · another ' + label + ' subscription account connected — runs continue on it when an account hits its limit');
       return json(200, { status: 'connected', account: acctId });
     }
@@ -20045,12 +20131,33 @@ async function handleOAuthAccounts(req, res, pid, verb) {
       if (!id || !oauthAccountEntry(pid, id)) return json(404, { ok: false, error: 'no such ' + label + ' account', code: 'account_not_found' });
       oauthAccountEntries.delete(pid + ':' + id);
       accountAuthSeen.delete(pid + ':' + id);
+      forgetAccountChoice(pid, id);
+      accountUsageAttemptAt.delete(accountKeyOf(pid, id));
       return json(200, { ok: providerAccounts.remove(pid, id) });
     }
     json(404, { error: 'unknown verb' });
   } catch (e) {
     json(502, { status: 'error', error: (e && e.message) || (label + ' sign-in failed'), code: (e && e.code) || 'account_auth_error' });
   }
+}
+
+/* -------------------- ACCOUNT CHOICE — the station rule --------------------
+     GET  /api/accounts/choice            -> { rule: 'best'|'order', rules }
+     POST /api/accounts/choice { rule }   -> { rule } once it is durably saved
+   A character's own rule (best | order | prefer:<provider>:<account>) rides its roster entry instead. */
+async function handleAccountChoice(req, res) {
+  const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  if (req.method === 'POST') {
+    let body; try { body = JSON.parse((await readBody(req, 4096)) || '{}') || {}; } catch (e) { return json(400, { error: 'bad json' }); }
+    const rule = AccountChoice.normalizeRule(body && body.rule);
+    if (!rule || rule.mode === 'prefer') return json(400, { error: 'rule must be best or order', code: 'bad_rule' });
+    const before = stationAccountRule;
+    stationAccountRule = rule;
+    try { saveAccountChoice(); }
+    catch (e) { stationAccountRule = before; return json(500, { error: 'the account rule could not be saved', code: 'persist_failed' }); }
+    return json(200, { rule: AccountChoice.ruleString(stationAccountRule) });
+  }
+  return json(200, { rule: AccountChoice.ruleString(stationAccountRule), rules: AccountChoice.RULE_MODES.slice() });
 }
 
 /* -------------------- Claude CLI — SIGN IN WITH CLAUDE --------------------
@@ -20089,6 +20196,7 @@ function noteAccountAuth(providerId, accountId, st) {
   if (st.loggedIn && st.email) seen.email = st.email;
   if (st.loggedIn && st.subscription) seen.subscription = st.subscription;
   accountAuthSeen.set(providerId + ':' + (accountId || 'primary'), seen);
+  if (st.loggedIn && st.subscription) noteAccountChoice(accountKeyOf(providerId, accountId), { plan: st.subscription });
 }
 /* SUBSCRIPTION STACKING — the ordered sign-ins a run on `providerId` may use: the primary (the provider's own
    store) first, then every extra account oldest-first, minus any a real probe PROVED signed out (unless that leaves
@@ -20123,11 +20231,79 @@ function extraAccountProviderFor(providerId, baseUrl, reasoningEffort) {
   const first = orderedAccountChain(providerId)[0];
   return (first && first.id) ? oauthAccountProvider(providerId, first, baseUrl, reasoningEffort) : null;
 }
-// accountChain in credPool order: available accounts first, a cooling (spent) one sinks to the back.
-function orderedAccountChain(providerId) {
-  const chain = accountChain(providerId);
-  const byKey = new Map(chain.map(a => [a.credKey, a]));
-  return credPool.order(chain.map(a => a.credKey)).map(k => byKey.get(k));
+// accountChain in run order (account-choice.js): ready accounts by the rule (the station's unless a character's is
+// given), then accounts resting after a usage limit or a failure (credPool's cooldown or a stated reset), then any
+// whose sign-in failed. Every account stays in the chain, so a run always falls back to the others.
+function orderedAccountChain(providerId, rule) {
+  return accountChoice.rank(accountChain(providerId), { rule: rule || stationAccountRule, coolingUntil: k => credPool.coolingUntil(k) });
+}
+// what Settings shows per account: plan, % of the cap used, the fullest window's reset, a rest or failed sign-in,
+// and whether runs (by the station rule) start on it next. order = orderedAccountChain(pid) credKeys.
+function accountChoiceRow(providerId, accountId, order, live) {
+  const key = accountKeyOf(providerId, accountId);
+  const v = accountChoice.view(key);
+  return { plan: v.plan, usedPct: v.usedPct, resetAt: v.resetAt, limitedUntil: v.limitedUntil, authFailed: v.authFailed, next: !!live && order[0] === key };
+}
+/* ChatGPT USAGE (the report the ChatGPT apps read): GET <chatgpt>/backend-api/wham/usage with that account's own
+   token -> plan_type + used_percent per window. Throttled per account (maxAgeMs since the last attempt); never throws;
+   never stores or logs the token. Grok and Kimi publish no usage report, so their accounts rank by order and rests. */
+const accountUsageAttemptAt = new Map();   // credKey -> ms of the last usage request
+function codexUsageUrl() {
+  // STARNET_CODEX_USAGE_URL points the report elsewhere (tests: a local fake) or turns it off ('off')
+  const override = String(ENV('CODEX_USAGE_URL') || '').trim();
+  if (override) return /^(off|0|false|none)$/i.test(override) ? '' : override;
+  const base = String(providerRuntimeBaseUrl('codex', '') || '').trim().replace(/\/+$/, '');
+  return base ? base.replace(/\/codex$/, '') + '/wham/usage' : '';
+}
+function codexPlanOf(tokens) {
+  try {
+    for (const t of [tokens && tokens.access_token, tokens && tokens.id_token]) {
+      const c = codexAuth.decodeJwtClaims(String(t || '')) || {};
+      const a = c['https://api.openai.com/auth'] || {};
+      if (typeof a.chatgpt_plan_type === 'string' && a.chatgpt_plan_type) return a.chatgpt_plan_type;
+    }
+  } catch (e) { failNote('accountchoice.codexplan', e); }
+  return '';
+}
+async function refreshCodexUsage(credKey, maxAgeMs) {
+  const m = /^account:codex:(primary|[a-f0-9]{8,32})$/.exec(String(credKey || ''));
+  if (!m) return false;
+  const now = Date.now();
+  if (now - (accountUsageAttemptAt.get(credKey) || 0) < (maxAgeMs == null ? 60000 : maxAgeMs)) return false;
+  accountUsageAttemptAt.set(credKey, now);
+  const url = codexUsageUrl();
+  if (!url) return false;
+  try {
+    const id = m[1] === 'primary' ? '' : m[1];
+    const entry = id ? oauthAccountEntry('codex', id) : null;
+    if (id && !entry) return false;
+    const tokens = id ? entry.tokens : codexTokens;
+    if (!tokens || !tokens.access_token) return false;
+    if (id ? entry.authDead : codexAuthDead) return false;   // a sign-in known dead is not asked again (no refresh churn)
+    const plan = codexPlanOf(tokens);
+    if (plan) noteAccountChoice(credKey, { plan });
+    const token = id ? await ensureAccountAccessToken(entry) : await ensureCodexAccessToken();
+    const r = await globalThis.fetch(url, { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json', originator: 'codex_cli_rs' }, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return false;
+    const patch = AccountChoice.parseCodexUsage(await r.json(), Date.now());
+    if (!patch) return false;
+    noteAccountChoice(credKey, patch);
+    return true;
+  } catch (e) {
+    if (!(e && e.reloginRequired)) failNote('accountchoice.codexusage', e);
+    return false;
+  }
+}
+// refresh every ChatGPT sign-in's usage, waiting at most waitMs (a slow report never holds up Settings)
+function refreshCodexUsageAll(maxAgeMs, waitMs) {
+  const all = Promise.all(accountChain('codex').map(a => refreshCodexUsage(a.credKey, maxAgeMs)));
+  if (!(waitMs > 0)) return all;
+  return Promise.race([all, new Promise(resolve => { const t = setTimeout(resolve, waitMs); if (t.unref) t.unref(); })]);
+}
+// Claude Code reports its usage windows on the run's own stream (rate_limit_event) — recorded per account.
+function noteClaudeUsage(credKey, info) {
+  const patch = AccountChoice.parseClaudeRateLimit(info, Date.now());
+  if (patch) noteAccountChoice(credKey, patch);
 }
 // An adapter bound to one OAuth sign-in: the primary through its own hardened keeper, an extra through its entry.
 function oauthAccountProvider(providerId, acct, baseUrl, reasoningEffort) {
@@ -20153,7 +20329,7 @@ async function handleClaudeCliAuth(req, res, verb) {
         if (!login) return json(404, { error: 'no such Claude Code account', code: 'account_not_found' });
         const st = await login.status();
         noteAccountAuth('claude-cli', account, st);
-        return json(200, st);
+        return json(200, Object.assign(st, { authFailed: accountChoice.view(accountKeyOf('claude-cli', account)).authFailed }));
       }
       // every connected sign-in, primary first — each one's own `claude auth status` (booleans/labels, no token)
       const chain = [{ id: '' }].concat(providerAccounts.list('claude-cli'));
@@ -20163,7 +20339,9 @@ async function handleClaudeCliAuth(req, res, verb) {
         const cooling = credPool.coolingUntil('account:claude-cli:' + (a.id || 'primary'));
         return Object.assign({ account: a.id, label: 'account ' + (i + 1), primary: !a.id, coolingUntil: cooling || 0 }, st);
       }));
-      return json(200, { accounts, max: 1 + providerAccounts.MAX });
+      const order = orderedAccountChain('claude-cli').map(a => a.credKey);
+      for (const a of accounts) Object.assign(a, accountChoiceRow('claude-cli', a.account, order, !!a.loggedIn));
+      return json(200, { accounts, max: 1 + providerAccounts.MAX, rule: AccountChoice.ruleString(stationAccountRule) });
     }
     let body; try { body = JSON.parse((await readBody(req, 1 << 12)) || '{}') || {}; } catch (e) { return json(400, { status: 'error', error: 'bad json' }); }
     if (verb === 'add') {
@@ -20176,7 +20354,7 @@ async function handleClaudeCliAuth(req, res, verb) {
         providerAccounts.remove('claude-cli', acct.id);
         return json(200, r);
       }
-      if (r && r.status === 'connected') noteAccountAuth('claude-cli', acct.id, Object.assign({ installed: true }, r));
+      if (r && r.status === 'connected') { noteAccountAuth('claude-cli', acct.id, Object.assign({ installed: true }, r)); noteFreshSignIn('claude-cli', acct.id); }
       return json(200, Object.assign({ account: acct.id }, r));
     }
     if (verb === 'remove') {
@@ -20188,15 +20366,18 @@ async function handleClaudeCliAuth(req, res, verb) {
       const out = await require('./providers/claude-cli.js').makeCliHost({ configDir: providerAccounts.dir('claude-cli', id) }).logout();
       _claudeCliAccountLogins.delete(id);
       accountAuthSeen.delete('claude-cli:' + id);
+      forgetAccountChoice('claude-cli', id);
       const removed = providerAccounts.remove('claude-cli', id);
       return json(200, { ok: removed, signedOut: !!out.ok });
     }
     const login = claudeCliLogin(String(body.account || ''));
     if (!login) return json(404, { status: 'error', error: 'no such Claude Code account', code: 'account_not_found' });
-    if (verb === 'start') return json(200, await login.start());
-    if (verb === 'poll') {
-      const r = await login.poll(body.login_id);
-      if (r && r.status === 'connected') noteAccountAuth('claude-cli', String(body.account || ''), Object.assign({ installed: true }, r));
+    if (verb === 'start' || verb === 'poll') {
+      const r = verb === 'start' ? await login.start() : await login.poll(body.login_id);
+      if (r && r.status === 'connected') {
+        noteAccountAuth('claude-cli', String(body.account || ''), Object.assign({ installed: true }, r));
+        noteFreshSignIn('claude-cli', String(body.account || ''));
+      }
       return json(200, r);
     }
     if (verb === 'code') return json(200, login.submitCode(body.login_id, body.code));

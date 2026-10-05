@@ -161,7 +161,7 @@ const OAuthAccounts = {
    never sees it) and /api/auth/claude-cli/* reports what the CLI proved. DOM-free like the engine above.
      status(account?)       -> the sidecar's { installed, loggedIn, authMethod, email?, subscription?, signingIn } or null
      accounts()             -> { accounts: [{ account, label, primary, coolingUntil, installed, loggedIn, … }], max } or null
-     start(cb, opts?)       cb.onStarting() · cb.onPending({ url, account }) · cb.onConnected(status) · cb.onError(msg, code)
+     start(cb, opts?)       cb.onStarting() · cb.onPending({ url, account, opensBrowser }) · cb.onConnected(status) · cb.onError(msg, code)
                             opts.account = sign in that extra account; opts.add = create a NEW account and sign it in
      submitCode(code)       -> { ok, error? } — the code the fallback sign-in page shows, relayed to the CLI's stdin
      cancel()               stops polling and kills the login child (an abandoned ADD also removes the empty account)
@@ -199,7 +199,8 @@ function makeClaudeCliSignIn() {
     if (j.status === 'connected') { if (cb.onConnected) cb.onConnected(Object.assign({ account }, j)); return; }
     if (j.status !== 'pending') { if (cb.onError) cb.onError(j.error || 'Claude sign-in failed', j.code || ''); return; }
     const my = flow = { login_id: j.login_id, url: j.url || '', account, added: !!opts.add };
-    if (cb.onPending) cb.onPending({ url: my.url, account });
+    // opensBrowser:false = the station runs where Claude Code cannot open a browser (a remote server): open the page here
+    if (cb.onPending) cb.onPending({ url: my.url, account, opensBrowser: j.opensBrowser !== false });
     poll(my, cb);
   }
   function poll(my, cb) {

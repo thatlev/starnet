@@ -381,6 +381,13 @@ fn station_port() -> Result<u16, String> {
     Ok(port)
 }
 
+/// A web link the remote station asks to open in a NEW window (a sign-in page, a docs link) is handed to the
+/// Mac's default browser. Only http(s): the same authority as clicking a link, never another app or scheme.
+/// Without this, WebKit drops window.open from the remote document and such links did nothing.
+fn external_link(url: &tauri::Url) -> Option<String> {
+    matches!(url.scheme(), "http" | "https").then(|| url.to_string())
+}
+
 fn is_startup_page(url: &tauri::Url) -> bool {
     url.scheme() == "tauri"
         && url.host_str() == Some("localhost")
@@ -450,6 +457,12 @@ fn build_remote_window(
             // The startup page is allowed only before this window first opens its station, so a station
             // document can never navigate back to a bundled page.
             !opened.load(Ordering::SeqCst) && is_startup_page(url)
+        })
+        .on_new_window(|url, _features| {
+            if let Some(link) = external_link(&url) {
+                let _ = crate::open_external_url(link);
+            }
+            tauri::webview::NewWindowResponse::Deny
         })
         .on_page_load(move |window, payload| {
             // Reveal after the first paint, so the window never opens blank.
@@ -841,6 +854,15 @@ pub fn stop(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn remote_new_windows_open_only_web_links_in_the_browser() {
+        for source in ["https://claude.com/cai/oauth/authorize?code=true", "http://example.com/docs"] {
+            assert_eq!(external_link(&source.parse().unwrap()).as_deref(), Some(source));
+        }
+        for source in ["file:///etc/passwd", "starnet-connect://setup", "tauri://localhost/index.html", "javascript:alert(1)", "mailto:a@b.c"] {
+            assert_eq!(external_link(&source.parse().unwrap()), None, "{source}");
+        }
+    }
     #[test]
     fn existing_stations_resume_and_fresh_users_get_the_chooser() {
         assert_eq!(location_choice(None, false, false), "setup");
