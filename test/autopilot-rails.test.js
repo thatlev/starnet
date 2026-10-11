@@ -29,7 +29,7 @@ try {
     { name: 'logos', status: 'pending' }
   ] }, Date.parse('2026-10-11T20:05:00Z'));
   write('096-haiku', { run_id: '096-haiku', account: 'THATLEV', headline: 'HAIKU ZEBRA', steps: { evidence: 'ok', copy: { state: 'failed', error: 'no copy pick' }, art: 'todo' } }, Date.parse('2026-10-11T20:10:00Z'));
-  write('097-other', { channel: 'second', slug: 'other', status: 'needs_approval', steps: [{ step: 'package', status: 'done' }] }, Date.parse('2026-10-11T19:00:00Z'));
+  write('097-other', { channel: 'second', slug: 'other', status: 'needs_approval', updated: '2026-10-11T22:00:00+0300', steps: [{ step: 'package', status: 'done', started: '2026-10-11T21:59:00+0300', finished: '2026-10-11T22:00:00+0300' }] }, Date.parse('2026-10-11T19:00:00Z'));
   write('098-broken', '{ not json', Date.parse('2026-10-11T18:00:00Z'));
   write('099-array', '[1,2]', Date.parse('2026-10-11T18:00:00Z'));
   fs.mkdirSync(path.join(runs, '100-empty'));                              // a run dir with no manifest yet is skipped
@@ -55,6 +55,8 @@ try {
   const other = out.channels[0].runs[0];
   assert.equal(other.status, 'review', 'explicit status wins'); n++;
   assert.equal(other.title, 'other'); n++;
+  assert.equal(other.updatedAt, Date.parse('2026-10-11T19:00:00Z'), 'the factory runtime\'s "updated" field'); n++;
+  assert.equal(other.steps[0].startedAt, Date.parse('2026-10-11T18:59:00Z'), '"started"/"finished" step fields'); n++;
   assert.deepEqual(out.errors.map(e => e.run).sort(), ['098-broken', '099-array'], 'bad manifests are reported, never invented'); n++;
   assert.equal(out.total, 5, 'only real run directories with a manifest count'); n++;
 

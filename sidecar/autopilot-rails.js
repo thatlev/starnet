@@ -51,8 +51,8 @@ function normStep(raw, fallbackName) {
   return {
     name: str(first(rec, ['name', 'id', 'step', 'label']) || fallbackName || 'step', 60),
     status: normStatus(first(rec, ['status', 'state'])),
-    startedAt: time(first(rec, ['started_at', 'startedAt', 'start'])),
-    endedAt: time(first(rec, ['finished_at', 'ended_at', 'endedAt', 'finishedAt', 'end'])),
+    startedAt: time(first(rec, ['started_at', 'startedAt', 'started', 'start'])),
+    endedAt: time(first(rec, ['finished_at', 'ended_at', 'endedAt', 'finishedAt', 'finished', 'end'])),
     note: str(first(rec, ['note', 'message', 'error', 'detail', 'summary']), 240)
   };
 }
@@ -81,8 +81,8 @@ function normRun(doc, dirName, mtimeMs) {
     channel: str(first(doc, ['channel', 'account', 'room']) || 'unassigned', 40).toLowerCase(),
     title: str(first(doc, ['title', 'headline', 'slug', 'idea']) || dirName, 160),
     status: overall(explicit, steps),
-    createdAt: time(first(doc, ['created_at', 'createdAt', 'started_at', 'startedAt'])),
-    updatedAt: time(first(doc, ['updated_at', 'updatedAt'])) || Math.round(mtimeMs),
+    createdAt: time(first(doc, ['created_at', 'createdAt', 'created', 'started_at', 'startedAt'])),
+    updatedAt: time(first(doc, ['updated_at', 'updatedAt', 'updated'])) || Math.round(mtimeMs),
     current: (steps.find(s => s.status === 'running' || s.status === 'failed' || s.status === 'review') || {}).name || '',
     steps
   };
