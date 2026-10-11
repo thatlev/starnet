@@ -21,7 +21,7 @@ function startMockProvider(seen) {
     const server = http.createServer((req, res) => {
       if (req.url.indexOf('/models') >= 0) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ data: [{ id: 'test/model', context_length: 8000, pricing: { prompt: '0', completion: '0' } }] }));
+        res.end(JSON.stringify({ data: [{ id: 'test/model', context_length: 8000, supported_parameters: ['tools'], pricing: { prompt: '0', completion: '0' } }] }));
         return;
       }
       let body = ''; req.on('data', d => { body += d; }); req.on('end', () => {
@@ -98,6 +98,16 @@ function seedWorkspace(ws) {
     A.eq(tg && tg.agentId, 'agent', '(b) bound to CAPTAIN');
     A.eq(tg && tg.history.map(m => m.role + ':' + m.content), ['user:status', 'assistant:Nothing is in production right now.'], '(b) the exchange is in the session');
     A.eq(saved.activeId, 'ws_general', '(b) the mirror did not steal focus');
+
+    // a crew member other than the lead mirrors into its own session too (the headless station knows the roster ids)
+    const rr = await (await fetch(B + '/v1/chat/completions', { method: 'POST',
+      headers: { Authorization: 'Bearer ' + KEY, 'Content-Type': 'application/json', 'X-StarNet-Agent': 'RUNNER', 'X-StarNet-Session-Title': 'Telegram · Movies' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'find a movie' }] }) })).json();
+    A.eq(rr.starnet && rr.starnet.agent, 'runner', 'RUNNER ran as itself: ' + JSON.stringify(rr).slice(0, 400));
+    A.eq(rr.starnet && rr.starnet.session && rr.starnet.session.mirrored, true, 'RUNNER exchange mirrored: ' + JSON.stringify(rr.starnet && rr.starnet.session));
+    const saved2 = JSON.parse(fs.readFileSync(path.join(ws, 'agent.save.json'), 'utf8')).doc;
+    const mv = (saved2.workstreams || []).find(w => w.title === 'Telegram · Movies');
+    A.eq(mv && mv.agentId, 'runner', 'the Movies session belongs to RUNNER');
 
     // unknown agent refused before any provider call
     const bad = await fetch(B + '/v1/chat/completions', { method: 'POST', headers: { Authorization: 'Bearer ' + KEY, 'Content-Type': 'application/json', 'X-StarNet-Agent': 'NOBODY' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'UNKNOWN-AGENT-PROBE' }] }) });

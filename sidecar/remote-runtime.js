@@ -19,7 +19,8 @@ function makeHeadlessStation({ saveStore, roster, runs, activeRuns, degraded = (
     const context = vm.createContext({ console, Date, JSON, setTimeout, clearTimeout,
       document: { addEventListener() {} }, U: { bus: { on() {} } },
       App: {
-        agents: () => Array.from(roster().values()).map(a => ({ ...a, id: a.agentId || a.id })),
+        // The live roster is a Map keyed by agent id (its records carry no id field), so take the key.
+        agents: () => Array.from(roster().entries()).map(([agentId, a]) => ({ ...a, agentId, id: agentId })),
         refreshRail() {},
         persist: () => {
           const slice = context.Workstreams.serialize();
