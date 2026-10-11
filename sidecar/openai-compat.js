@@ -291,6 +291,9 @@ function makeOpenAiCompat(deps) {
       trigger: 'event', surface: 'autonomous',   // headless external caller: default-deny ungranted mutation, never stall
       broadcast: true,                            // light the station floor — a user SEES the external harness's run
       taskKey: 'v1:' + o.agentId, taskSource: 'api',
+      // X-StarNet-Agent runs are work for a named crew member (an operator answering "status" must read real
+      // state), so they run as TASKS: the agent's tools are advertised. Plain /v1 calls keep the chat default.
+      isTask: o.isTask === true ? true : undefined,
       // an externally-driven run is still this agent doing real work — it learns from it like any other, with each
       // record stamped origin:'api' so the Commander can tell it apart from their own conversation.
       reflect: !o.outputOnly, outputOnly: !!o.outputOnly, maxIters: o.outputOnly ? 1 : undefined
@@ -466,7 +469,7 @@ function makeOpenAiCompat(deps) {
       inFlight++;
       let acc;
       try {
-        acc = await startRun({ runId: id, agentId, model: runModel, provider, system, messages, signal: ac.signal, onDelta: (dlt) => sseData(res, chatChunk({ id, model: modelField, created, delta: { content: dlt } })) });
+        acc = await startRun({ runId: id, agentId, model: runModel, provider, system, messages, isTask: !!pinned, signal: ac.signal, onDelta: (dlt) => sseData(res, chatChunk({ id, model: modelField, created, delta: { content: dlt } })) });
       } finally { inFlight--; }
       finished = true;
       const finishReason = finishReasonFor(acc.reason);
@@ -486,7 +489,7 @@ function makeOpenAiCompat(deps) {
     // sync JSON
     inFlight++;
     let acc;
-    try { acc = await startRun({ runId: id, agentId, model: runModel, provider, system, messages, signal: ac.signal }); }
+    try { acc = await startRun({ runId: id, agentId, model: runModel, provider, system, messages, isTask: !!pinned, signal: ac.signal }); }
     finally { inFlight--; }
     if (contract.schema && acc.reason === 'done') {
       const checked = resultContract.inspect(contract.schema,acc.buf);

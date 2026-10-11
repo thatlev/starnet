@@ -55,6 +55,7 @@ const { makeOpenAiCompat } = require('../sidecar/openai-compat');
     assert.ok(run.system.startsWith('You are CAPTAIN. Read real state.'), 'own prompt leads'); n++;
     assert.ok(run.system.includes('CALLER CONTEXT') && run.system.includes('Topic: Videos.'), 'caller system rides after it'); n++;
     assert.equal(run.surface, 'autonomous'); n++;
+    assert.equal(run.isTask, true, 'a pinned crew run is a task: its tools are advertised'); n++;
     assert.equal(body.choices[0].message.content, 'status: 0 runs in flight'); n++;
     assert.equal(body.starnet.agent, 'agent'); n++;
     assert.deepEqual(body.starnet.session, { title: 'Telegram · Videos', mirrored: true }); n++;
@@ -103,6 +104,7 @@ const { makeOpenAiCompat } = require('../sidecar/openai-compat');
     res = await post({}, { model: 'CAPTAIN', messages: [{ role: 'system', content: 'S' }, { role: 'user', content: 'plain' }] });
     assert.equal(res.status, 200); n++;
     assert.match(seen.at(-1).agentId, /^api-/); n++;
+    assert.equal(seen.at(-1).isTask, undefined, 'plain /v1 keeps the chat default'); n++;
     assert.equal(seen.at(-1).system, 'S'); n++;
 
     // 8. the header needs auth like everything else

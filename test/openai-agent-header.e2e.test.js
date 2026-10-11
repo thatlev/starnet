@@ -88,6 +88,7 @@ function seedWorkspace(ws) {
     A.ok(sent.indexOf('CAPTAIN-E2E-MARKER') >= 0, '(a) the provider received the agent\'s own roster prompt');
     A.ok(sent.indexOf('TOPIC-E2E') >= 0 && sent.indexOf('CALLER CONTEXT') >= 0, '(a) the caller context rides after it');
     A.ok(sent.indexOf('RUNNER-E2E') < 0, '(a) no other agent\'s prompt leaks in');
+    A.ok(/"tools"\s*:\s*\[/.test(sent) && /shell/.test(sent), '(a) the crew run is a task: its tools (incl. the shell) reach the provider');
 
     // (b) mirrored into the durable save through the headless station
     A.eq(body.starnet.session && body.starnet.session.mirrored, true, '(b) the response reports the mirror: ' + JSON.stringify(body.starnet.session));
@@ -99,10 +100,10 @@ function seedWorkspace(ws) {
     A.eq(saved.activeId, 'ws_general', '(b) the mirror did not steal focus');
 
     // unknown agent refused before any provider call
-    const before = seen.length;
-    const bad = await fetch(B + '/v1/chat/completions', { method: 'POST', headers: { Authorization: 'Bearer ' + KEY, 'Content-Type': 'application/json', 'X-StarNet-Agent': 'NOBODY' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'x' }] }) });
+    const bad = await fetch(B + '/v1/chat/completions', { method: 'POST', headers: { Authorization: 'Bearer ' + KEY, 'Content-Type': 'application/json', 'X-StarNet-Agent': 'NOBODY' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'UNKNOWN-AGENT-PROBE' }] }) });
     A.eq(bad.status, 404, 'unknown agent → 404');
-    A.eq(seen.length, before, 'no provider call for an unknown agent');
+    await new Promise(r => setTimeout(r, 300));
+    A.ok(!seen.some(b => b.indexOf('UNKNOWN-AGENT-PROBE') >= 0), 'no provider call for an unknown agent');
 
     // (c) rails
     const denied = await fetch(B + '/api/autopilot/rails');
