@@ -99,3 +99,15 @@ Result contracts support bounded draft-07-style constraints including minimum, m
 oneOf, and local JSON Pointer references. Recursive/remote references and complex regex
 patterns are rejected explicitly. Schemas are bounded to 12,000 characters and structured
 results to 1 MiB for validation. No validator-unavailable fallback accepts unvalidated JSON.
+
+## Running as a roster agent and mirroring into a session (Lev's fork, 2026-10-11)
+
+Two optional headers, honoured only past the bearer gate:
+
+| Header | Effect |
+| --- | --- |
+| `X-StarNet-Agent: <name or id>` | The run executes AS that roster agent: its own roster `system` prompt leads (request `system` messages follow as `CALLER CONTEXT`), its model/provider, approval posture, execution profile and workspace apply. Unknown names answer 404 `unknown_agent` before any run. The `model` field is then ignored. |
+| `X-StarNet-Session-Title: <title>` | With `X-StarNet-Agent`, the user message and the reply are appended to that agent's session with exactly this title (created the first time, never focused) via the `station.mirror_turn` bridge verb. Idempotent by run id. |
+
+The response's `starnet` object adds `agent` and, when a title was given, `session: { title, mirrored, error? }`.
+This is how a Telegram bridge talks to the station's Captain while the conversation stays visible in COMMS.

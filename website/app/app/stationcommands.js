@@ -326,6 +326,44 @@ const StationCommands = (() => {
       return { settled: true, session: hit.w.title || 'General', resolvedBy: hit.resolvedBy };
     },
 
+    /* Mirror one exchange that reached an agent through an external bridge (the /v1 API with X-StarNet-Agent,
+       e.g. Telegram) into that agent's session with this exact title, creating the session the first time. The
+       Commander's message is a real user turn (they typed it, just elsewhere) and the reply is that agent's
+       turn, so COMMS shows the conversation as it happened. Exact title per agent only (never a substring
+       guess), and idempotent by runId so a retried mirror never double-posts. */
+    'station.mirror_turn': (a) => {
+      if (typeof Workstreams === 'undefined' || !Workstreams.list || !Workstreams.create) throw new Error('sessions are not ready yet');
+      const title = String((a && a.sessionTitle) || '').trim().slice(0, 80);
+      if (!title) throw new Error('a mirrored exchange needs a session title');
+      const agentId = String((a && a.agentId) || 'agent').trim() || 'agent';
+      const user = String((a && a.userText) || '').trim();
+      const reply = String((a && a.replyText) || '').trim();
+      if (!user && !reply) throw new Error('nothing to mirror');
+      if (agentId !== 'agent' && typeof App !== 'undefined' && App.agents && !(App.agents() || []).some(x => x && x.id === agentId)) {
+        throw new Error('no crew member with id "' + agentId + '"');
+      }
+      const lower = title.toLowerCase();
+      const hits = (Workstreams.list() || []).filter(w => w && String(w.title || '').trim().toLowerCase() === lower
+        && String(w.agentId || 'agent') === agentId);
+      if (hits.length > 1) throw new Error('more than one session of ' + agentId + ' is called "' + title + '"');
+      let ws = hits[0] || null;
+      const created = !ws;
+      if (!ws) ws = Workstreams.create(title, { agentId, activate: false });
+      if (!ws) throw new Error('the station could not create the session');
+      const runId = String((a && a.runId) || '');
+      if (runId && (ws.runIds || []).indexOf(runId) >= 0) return { mirrored: false, reason: 'already mirrored', session: ws.title, id: ws.id };
+      const ts = Number(a && a.ts) > 0 ? Number(a.ts) : Date.now();
+      const via = String((a && a.channel) || 'api').trim().slice(0, 40) || 'api';
+      if (!Array.isArray(ws.history)) ws.history = [];
+      if (user) ws.history.push({ role: 'user', content: user.slice(0, 20000), via, ts });
+      if (reply) ws.history.push({ role: 'assistant', content: reply.slice(0, 60000), agentId, via, ts: ts + 1 });
+      if (runId && Workstreams.appendRun) Workstreams.appendRun(ws.id, runId, ts);
+      else if (Workstreams.touch) Workstreams.touch(ws.id);
+      if (Workstreams.markUnread) Workstreams.markUnread(ws.id);
+      refreshAndPersist(ws, false);
+      return { mirrored: true, created, session: ws.title, id: ws.id, agentId };
+    },
+
     /* Who is on the roster and what each one is for — the list a delegate call has to choose from. */
     'station.crew': () => {
       if (typeof App === 'undefined' || !App.agents) throw new Error('the crew roster is not ready yet');

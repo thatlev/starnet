@@ -20,3 +20,10 @@ test/harness-internal.test.js
 test/harness-placement.test.js
 test/harness.cancel-truth.test.js
 test/station-config.test.js
+# Lev autopilot: run-as-agent bridge API, session mirror and RAILS.
+test/openai-agent-header.test.js
+test/autopilot-rails.test.js
+test/remote-rails-render.test.js
+test/openai-outcomes.test.js
+test/openai-compat.e2e.test.js
+test/openai-agent-header.e2e.test.js

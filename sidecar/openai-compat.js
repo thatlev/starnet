@@ -40,7 +40,8 @@ const MIN_KEY_LEN = 16;              // below this, refuse to enable (guessable 
 const AID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const DEFAULT_MODEL_ID = 'starnet-agent';   // the stable advertised model id
 const RUN_TTL_MS = 60 * 60 * 1000;   // terminal /v1/runs records are swept an hour after they finish
-const MAX_BODY = 10 * 1024 * 1024;   // 10MB — long agent conversations with tool calls
+const MAX_BODY = 10 * 1024 * 1024;
+const MIRROR_TIMEOUT_MS = 8000;   // bounded wait for an X-StarNet-Session-Title mirror before answering   // 10MB — long agent conversations with tool calls
 
 // ---- pure helpers (no ambient clock/rng; all injected) ---------------------------------------------------
 
@@ -189,7 +190,10 @@ function deriveSessionId(system, firstUser) {
      now()                -> number Date.now
      readBody(req, max)   -> Promise<string>
      redact(s)            -> string
-     logBoot(line)                  one-line boot log (enabled/disabled) */
+     logBoot(line)                  one-line boot log (enabled/disabled)
+     agentSystem(agentId) -> string the roster agent's own composed system prompt (for X-StarNet-Agent runs)
+     mirrorTurn(o)        -> Promise<{ok,result?,error?}>  folds an X-StarNet-Agent exchange into that agent's app
+                                    session titled o.sessionTitle (station.mirror_turn); optional */
 function makeOpenAiCompat(deps) {
   const d = deps || {};
   if (typeof d.runOnce !== 'function') throw new Error('makeOpenAiCompat: runOnce is required');
@@ -209,6 +213,8 @@ function makeOpenAiCompat(deps) {
   const now = d.now;
   const readBody = typeof d.readBody === 'function' ? d.readBody : null;
   const redact = typeof d.redact === 'function' ? d.redact : (s) => s;
+  const agentSystemFn = typeof d.agentSystem === 'function' ? d.agentSystem : () => '';
+  const mirrorTurnFn = typeof d.mirrorTurn === 'function' ? d.mirrorTurn : null;
 
   // shared in-flight counter across chat/completions (sync+stream) AND /v1/runs. 429 when it would exceed the cap.
   let inFlight = 0;
@@ -300,6 +306,13 @@ function makeOpenAiCompat(deps) {
     if (assistantText) { try { store.appendTurn(agentId, 'assistant', String(assistantText)); } catch (_) {} }
   }
 
+  // What the app session shows for an exchange: the reply, or an honest note when the run produced none.
+  function mirrorReplyText(acc) {
+    if (acc && acc.buf) return acc.buf;
+    const outcome = runOutcome(acc && acc.reason, false, acc && acc.errMsg && redact(acc.errMsg));
+    return '[no reply: ' + outcome.status + (outcome.error ? ' - ' + outcome.error : '') + ']';
+  }
+
   // ---- auth + host gate (applied to every /v1/* request) -----------------------------------------------------
   // returns a truthy response-already-written flag when the request is rejected.
   function gate(req, res) {
@@ -326,6 +339,37 @@ function makeOpenAiCompat(deps) {
     if (!raw) return '';
     if (/[\r\n\x00]/.test(raw) || raw.length > 256) return '';
     return raw;
+  }
+
+  // X-StarNet-Agent: run AS a named roster agent (its own system prompt, model, provider, approval posture and
+  // per-agent workspace) instead of an ephemeral api-* agent. Honored only under auth (past gate()). '' = absent.
+  function agentHeaderOf(req) {
+    const h = (req && req.headers) || {};
+    const raw = String(h['x-starnet-agent'] || '').trim();
+    if (!raw || /[\r\n\x00]/.test(raw) || raw.length > 64) return '';
+    return raw;
+  }
+  // X-StarNet-Session-Title: the app session (per agent, by exact title) that an X-StarNet-Agent exchange is
+  // mirrored into, so a message that arrived over a bridge (Telegram) is visible in COMMS like a typed one.
+  function sessionTitleOf(req) {
+    const h = (req && req.headers) || {};
+    const raw = String(h['x-starnet-session-title'] || '').trim();
+    if (!raw || /[\r\n\x00]/.test(raw)) return '';
+    return raw.slice(0, 80);
+  }
+  // Mirror one finished exchange into the agent's titled session. Bounded wait; never throws; returns the truth.
+  async function mirrorExchange(o) {
+    if (!mirrorTurnFn || !o.sessionTitle) return null;
+    let timer;
+    try {
+      const out = await Promise.race([
+        Promise.resolve().then(() => mirrorTurnFn(o)),
+        new Promise(resolve => { timer = setTimeout(() => resolve({ ok: false, error: 'mirror timed out' }), MIRROR_TIMEOUT_MS); if (timer.unref) timer.unref(); })
+      ]);
+      return (out && out.ok) ? { title: o.sessionTitle, mirrored: true } : { title: o.sessionTitle, mirrored: false, error: redact(String((out && out.error) || 'mirror refused')) };
+    } catch (e) {
+      return { title: o.sessionTitle, mirrored: false, error: redact(String((e && e.message) || e)) };
+    } finally { if (timer) clearTimeout(timer); }
   }
 
   // ---- GET /v1/models ---------------------------------------------------------------------------------------
@@ -358,6 +402,8 @@ function makeOpenAiCompat(deps) {
       },
       streaming: true,
       session_continuity_header: 'X-StarNet-Session-Id',
+      agent_header: 'X-StarNet-Agent',
+      session_title_header: 'X-StarNet-Session-Title',
       surface: 'autonomous',
       max_concurrent_runs: maxConcurrent(),
       // deliberate follow-ups NOT in this slice (see docs/OPENAI_COMPAT.md):
@@ -381,14 +427,29 @@ function makeOpenAiCompat(deps) {
     const stream = coerceBool(body.stream, false);
     if (stream && contract.schema) return json(res,400,openAiError('Structured streaming is not supported; use stream:false for host-validated JSON',{param:'stream'}));
     const modelField = String(body.model || DEFAULT_MODEL_ID);
-    const target = resolveTarget(modelField);
+    const asAgent = agentHeaderOf(req);
+    const pinned = asAgent ? resolveTarget(asAgent) : null;
+    if (asAgent && !(pinned.matched && AID_RE.test(pinned.agentId))) {
+      return json(res, 404, openAiError('No roster agent is called "' + asAgent + '"', { code: 'unknown_agent', param: 'X-StarNet-Agent' }));
+    }
+    const target = pinned || resolveTarget(modelField);
     const sessionId = sessionIdOf(req) || deriveSessionId(parsed.system, parsed.history.length ? (parsed.history[0].content) : parsed.lastUser);
-    const agentId = deriveAgentId(sessionId, target);
+    // X-StarNet-Agent pins the run to that roster agent's own id (its workspace, approval posture and room);
+    // otherwise the documented session/ephemeral derivation applies unchanged.
+    const agentId = pinned ? pinned.agentId : deriveAgentId(sessionId, target);
     const runModel = target.matched ? (target.model || defaultModel()) : defaultModel();
     const provider = target.provider || 'openrouter';
+    const sessionTitle = pinned ? sessionTitleOf(req) : '';
     // conversation for runOnce = prior turns (history) + the new user directive last (system passed separately).
     const messages = parsed.history.map(m => ({ role: m.role, content: m.content })).concat([{ role: 'user', content: parsed.lastUser }]);
     let system = parsed.system || 'You are the Commander\'s StarNet agent, reached over an OpenAI-compatible API. Use your REAL tools when given a task and report what you actually did.';
+    if (pinned) {
+      // The agent's OWN roster prompt leads; the caller's system text rides after it as clearly-labelled context.
+      let own = '';
+      try { own = String(agentSystemFn(pinned.agentId) || '').trim(); } catch (_) { own = ''; }
+      system = (own || 'You are the Commander\'s StarNet agent. Use your REAL tools when given a task and report what you actually did.')
+        + (parsed.system ? '\n\nCALLER CONTEXT (from the authenticated bridge that delivered this message):\n' + parsed.system : '');
+    }
 
     if (contract.schema) system += '\nReturn ONLY strict JSON matching this schema: ' + JSON.stringify(contract.schema);
     const id = reservedId || 'chatcmpl-' + String(newId()).replace(/-/g, '').slice(0, 24);
@@ -412,6 +473,8 @@ function makeOpenAiCompat(deps) {
       const usage = { prompt_tokens: acc.tokensIn, completion_tokens: acc.tokensOut, total_tokens: acc.tokensIn + acc.tokensOut };
       const finishChunk = chatChunk({ id, model: modelField, created, delta: {}, finishReason, usage });
       finishChunk.starnet = runOutcome(acc.reason, !!acc.buf, acc.errMsg && redact(acc.errMsg));
+      if (pinned) finishChunk.starnet.agent = pinned.agentId;
+      if (sessionTitle) finishChunk.starnet.session = await mirrorExchange({ agentId, sessionTitle, userText: parsed.lastUser, replyText: mirrorReplyText(acc), runId: acc.runId || id, ts: now() });
       if (finishReason === 'error') finishChunk.error = { message: redact(acc.errMsg || 'agent run did not produce a response'), type: 'agent_error' };
       sseData(res, finishChunk);
       try { res.write('data: [DONE]\n\n'); } catch (_) {}
@@ -439,6 +502,7 @@ function makeOpenAiCompat(deps) {
       }
     }
     persistTurns(agentId, parsed.lastUser, acc.buf);
+    const mirrored = sessionTitle ? await mirrorExchange({ agentId, sessionTitle, userText: parsed.lastUser, replyText: mirrorReplyText(acc), runId: acc.runId || id, ts: now() }) : null;
     if (!acc.buf && ['failed', 'interrupted'].includes(runOutcome(acc.reason, false).status)) {
       // no text produced AND an error — hard fail with an OpenAI-style server_error (like the reference harness agent_incomplete).
       return json(res, 502, openAiError(redact(acc.errMsg || 'Agent run ended without a successful terminal event'), { type: 'server_error', code: 'agent_incomplete' }));
@@ -447,6 +511,8 @@ function makeOpenAiCompat(deps) {
     const usage = { prompt_tokens: acc.tokensIn, completion_tokens: acc.tokensOut, total_tokens: acc.tokensIn + acc.tokensOut };
     const response = chatCompletionObject({ id, model: modelField, created, content: acc.buf, finishReason, usage });
     response.starnet = runOutcome(acc.reason, !!acc.buf, acc.errMsg && redact(acc.errMsg));
+    if (pinned) response.starnet.agent = pinned.agentId;
+    if (mirrored) response.starnet.session = mirrored;
     if (finishReason === 'error') response.error = { message: response.starnet.error || response.starnet.status, type: 'agent_error' };
     return json(res, 200, response, { 'X-StarNet-Session-Id': sessionId });
   }

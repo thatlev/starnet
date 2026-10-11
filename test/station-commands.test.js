@@ -422,6 +422,37 @@ async function call(env, verb, args) {
   }
 }
 
+// ---- station.mirror_turn: a bridged (Telegram) exchange lands in the agent's titled session ----
+{
+  const env = boot({ agents: () => [{ id: 'agent' }, { id: 'runner' }] });
+  const general = env.W.create('General chat', { agentId: 'agent' });
+  let out = await call(env, 'station.mirror_turn', { agentId: 'agent', sessionTitle: 'Telegram · Videos', userText: 'status', replyText: 'Nothing in flight.', runId: 'r1', ts: 100 });
+  A.ok(out.ok, 'mirror succeeds: ' + JSON.stringify(out));
+  A.eq(out.result.created, true, 'first mirror creates the session');
+  const ws = env.W.list().find(w => w.title === 'Telegram · Videos');
+  A.ok(!!ws, 'the session exists with the exact title');
+  A.eq(ws.agentId, 'agent', 'bound to the agent that answered');
+  A.eq(ws.history.map(m => m.role + ':' + m.content), ['user:status', 'assistant:Nothing in flight.'], 'user turn then reply');
+  A.eq(ws.history[1].agentId, 'agent', 'reply is attributed');
+  A.ok(env.W.activeId() !== ws.id, 'mirroring never steals focus');
+  A.ok(env.page.persisted > 0, 'persisted');
+  out = await call(env, 'station.mirror_turn', { agentId: 'agent', sessionTitle: 'telegram · videos', userText: 'again', replyText: 'Still nothing.', runId: 'r2', ts: 200 });
+  A.eq(out.result.created, false, 'the same title (any case) reuses the session');
+  A.eq(ws.history.length, 4, 'appended, not replaced');
+  out = await call(env, 'station.mirror_turn', { agentId: 'agent', sessionTitle: 'Telegram · Videos', userText: 'again', replyText: 'Still nothing.', runId: 'r2', ts: 200 });
+  A.eq(out.result.mirrored, false, 'a retried runId never double-posts');
+  A.eq(ws.history.length, 4, 'history unchanged by the retry');
+  out = await call(env, 'station.mirror_turn', { agentId: 'runner', sessionTitle: 'Telegram · Videos', userText: 'movie', replyText: 'on it', runId: 'r3' });
+  A.ok(out.ok && out.result.created, 'another agent gets its own session with the same title');
+  out = await call(env, 'station.mirror_turn', { agentId: 'ghost', sessionTitle: 'X', userText: 'a', replyText: 'b' });
+  A.ok(!out.ok && /no crew member/.test(out.error), 'unknown agent refused');
+  out = await call(env, 'station.mirror_turn', { agentId: 'agent', sessionTitle: '', userText: 'a' });
+  A.ok(!out.ok && /title/.test(out.error), 'title required');
+  out = await call(env, 'station.mirror_turn', { agentId: 'agent', sessionTitle: 'T', userText: '', replyText: '' });
+  A.ok(!out.ok && /nothing to mirror/.test(out.error), 'empty exchange refused');
+  A.eq(general.history.length, 0, 'other sessions untouched');
+}
+
 A.report('station-commands.test');
 
 })().catch(error => { console.error(error); process.exit(1); });

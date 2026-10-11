@@ -8987,6 +8987,14 @@ const openaiCompat = makeOpenAiCompat({
   resolveProviderKey: (provider) => providerRuntimeKey(normalizeProvider(provider), ''),
   resolveBaseUrl: (provider) => providerRuntimeBaseUrl(normalizeProvider(provider), ''),
   roster: () => [...agentRoster].map(([agentId, a]) => ({ agentId, name: a.name, model: a.model, provider: a.provider })),
+  // X-StarNet-Agent runs use the agent's OWN composed prompt (the one the dossier pushed via /api/roster).
+  agentSystem: (agentId) => String((agentRoster.get(String(agentId || '')) || {}).system || ''),
+  // X-StarNet-Session-Title: fold the exchange into that agent's titled session (headless in remote mode, the
+  // live page otherwise) through the same station bridge deliveries use.
+  mirrorTurn: (o) => stationBridge.request('station.mirror_turn', {
+    agentId: o.agentId, sessionTitle: o.sessionTitle, userText: redact(String(o.userText || '')),
+    replyText: redact(String(o.replyText || '')), runId: o.runId, channel: 'api', ts: o.ts
+  }),
   store: channelStore,
   isAllowedHost: isAllowedHost,
   constTimeEq: apiauth.constTimeEq,
@@ -9360,6 +9368,7 @@ const ROUTES = [
   { m: 'POST', exact: '/api/channels/discord/sync', h: handleDiscordSync },
   { m: 'POST', exact: '/api/channels/discord/disconnect', h: handleDiscordDisconnect },
   { m: 'GET', exact: '/api/channels/discord/status', h: handleDiscordStatus },
+  { m: 'GET', exact: '/api/autopilot/rails', h: handleAutopilotRails },   // RAILS: read-only view of an external pipeline's runs/<id>/run.json
   { m: 'POST', exact: '/api/channels/notify', h: handleChannelNotify },
   // DEV-ONLY (404s unless SKYNET_DEV): inject an inbound message through the real channel hub — floor
   // routing / classifier / crate telemetry testable without a live bot token. Own errorPolicy → always JSON.
@@ -19478,6 +19487,17 @@ async function handleDiscordDisconnect(req, res) {
 }
 
 // GET /api/channels/discord/status — booleans + gateway state ONLY; never the token/key. Mirrors handleChannelStatus.
+// RAILS (read-only): the external production pipeline's per-video manifests (<autopilot home>/runs/<id>/run.json),
+// normalized into one rail per video grouped by channel. The directory comes from the service environment only.
+const AUTOPILOT_HOME = String(process.env.STARNET_AUTOPILOT_HOME || process.env.AUTOPILOT_HOME || '/srv/private/autopilot');
+const { readRails } = require('./autopilot-rails.js');
+function handleAutopilotRails(req, res) {
+  let out;
+  try { out = readRails({ root: AUTOPILOT_HOME }); }
+  catch (e) { out = { ok: false, root: AUTOPILOT_HOME, channels: [], errors: [], error: 'rails read failed: ' + ((e && e.message) || e) }; }
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(Object.assign({ readAt: Date.now() }, out)));
+}
 function handleDiscordStatus(req, res) {
   const d = (channelSecrets && channelSecrets.discord) || {};
   const configured = !!channelToken('discord', '', d);   // keychain/runtime token (desktop) or plaintext record (bare)
