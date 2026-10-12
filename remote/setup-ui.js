@@ -3,7 +3,8 @@
   const $ = id => document.getElementById(id);
   const token = document.querySelector('meta[name=setup-token]').content;
   let initialized = false, polling = false, current = null, lastMessage = null, mode = 'new', openAfterTest = false;
-  const input = () => ({ host: $('host').value.trim(), 'ssh-port': $('ssh-port').value, 'gateway-port': $('gateway-port').value });
+  const input = () => ({ host: $('host').value.trim(), name: $('name').value.trim(), 'ssh-port': $('ssh-port').value, 'gateway-port': $('gateway-port').value });
+  const stationLabel = config => config && (config.name || String(config.host).replace(/^.*@/, ''));
   function invalidate() { $('open').hidden = true; $('test').hidden = false; }
   function render(state) {
     current = state;
@@ -11,8 +12,13 @@
       initialized = true;
       mode = state.config ? 'existing' : 'new';
       renderMode();
-      if (state.config) { $('host').value = state.config.host; $('ssh-port').value = state.config['ssh-port'] || ''; $('gateway-port').value = state.config['gateway-port']; }
+      if (state.config) { $('host').value = state.config.host; $('name').value = state.config.name || ''; $('ssh-port').value = state.config['ssh-port'] || ''; $('gateway-port').value = state.config['gateway-port']; }
     }
+    // A saved server is shown by its own name; This Computer stays one step away as the second choice.
+    const label = stationLabel(state.config);
+    $('mode-label').textContent = label ? label.toUpperCase() : 'CONNECTION SETUP';
+    $('station-card-name').textContent = label ? label.toUpperCase() : 'YOUR SERVER';
+    $('station-card-hint').textContent = label ? 'Your station keeps your agents running around the clock.' : 'Connect to a computer you run StarNet on.';
     $('location-choice').hidden = !state.localAvailable;
     $('local').disabled = !state.localAvailable;
     $('identity').textContent = state.user ? 'Signed in as ' + state.user.login : 'Sign in with the GitHub account that owns this station.';
@@ -21,10 +27,10 @@
     const messageKey = state.phase + ':' + state.message;
     if (messageKey !== lastMessage) { $('status').textContent = state.message; $('status').dataset.phase = state.phase; lastMessage = messageKey; }
     $('cancel').hidden = !state.busy;
-    for (const id of ['login', 'profile', 'test', 'ssh', 'install', 'host', 'ssh-port', 'gateway-port']) $(id).disabled = state.busy || (id === 'install' && !state.installerAvailable) || (id === 'gateway-port' && mode === 'new');
+    for (const id of ['login', 'profile', 'test', 'ssh', 'install', 'host', 'name', 'ssh-port', 'gateway-port']) $(id).disabled = state.busy || (id === 'install' && !state.installerAvailable) || (id === 'gateway-port' && mode === 'new');
     document.querySelectorAll('[data-mode]').forEach(el => el.disabled = state.busy);
     $('return').disabled = state.busy;
-    const canOpen = !state.busy && state.phase === 'connected' && state.config && JSON.stringify(input()) === JSON.stringify({ host: state.config.host, 'ssh-port': String(state.config['ssh-port'] || ''), 'gateway-port': String(state.config['gateway-port']) });
+    const canOpen = !state.busy && state.phase === 'connected' && state.config && JSON.stringify(input()) === JSON.stringify({ host: state.config.host, name: state.config.name || '', 'ssh-port': String(state.config['ssh-port'] || ''), 'gateway-port': String(state.config['gateway-port']) });
     $('test').hidden = !!canOpen; $('open').hidden = !canOpen;
     if (openAfterTest && !state.busy && (canOpen || state.phase === 'error')) {
       openAfterTest = false;
@@ -54,7 +60,7 @@
   $('ssh').onclick = () => { if ($('connection').reportValidity()) action('ssh', input()); };
   $('install').onclick = () => { if ($('connection').reportValidity()) action('install', input()); };
   $('open').onclick = openStation; $('return').onclick = openStation;
-  for (const id of ['host', 'ssh-port', 'gateway-port']) $(id).addEventListener('input', invalidate);
+  for (const id of ['host', 'name', 'ssh-port', 'gateway-port']) $(id).addEventListener('input', invalidate);
   function renderMode() {
     document.querySelectorAll('[data-mode]').forEach(button => {
       button.classList.toggle('sel', button.dataset.mode === mode);

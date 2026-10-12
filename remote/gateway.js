@@ -4,6 +4,7 @@
 const http = require('node:http');
 const crypto = require('node:crypto');
 const { isAllowedHost, isAllowedApiOrigin } = require('../sidecar/apiauth');
+const { offlinePage } = require('./station-status');
 
 const json = (res, code, value) => {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -165,7 +166,17 @@ function createClient({ gatewayPort, localPort, getSession, invalidateSession, c
       }
       const session = await getSession();
       proxy(req, res, { port: gatewayPort, agent, headers: { authorization: 'Bearer ' + session.token }, onUnauthorized: invalidateSession });
-    } catch (_) { json(res, 503, { error: 'Reconnecting to your server. Existing runs continue on the server.' }); }
+    } catch (_) {
+      if (res.headersSent) return res.destroy();
+      // A window asking for the station itself gets a readable status page that retries, not raw JSON.
+      const document = req.method === 'GET' && !/^\/(?:api|remote)(?:\/|\?|$)/.test(req.url)
+        && (req.headers['sec-fetch-dest'] === 'document' || String(req.headers.accept || '').includes('text/html'));
+      if (!document) return json(res, 503, { error: 'Reconnecting to your server. Existing runs continue on the server.' });
+      let message = 'Reconnecting to your server…';
+      try { message = connection?.status().message || message; } catch (_) {}
+      res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Retry-After': '3' });
+      res.end(offlinePage(message));
+    }
   });
   server.once('close', () => agent.destroy());
   server.headersTimeout = 15000;

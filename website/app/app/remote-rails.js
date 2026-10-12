@@ -57,7 +57,7 @@
         card.dataset.status = run.status;
         const head = el('div', 'rails-run-head', null, card);
         el('span', 'rails-run-title', run.title || run.id, head);
-        const chip = el('span', 'rails-chip', LABEL[run.status] || run.status, head);
+        const chip = el('span', 'rails-chip', run.outcome || LABEL[run.status] || run.status, head);
         chip.dataset.status = run.status;
         const rail = el('ol', 'rails-track', null, card);
         rail.setAttribute('aria-label', 'Steps for ' + (run.title || run.id));
@@ -71,6 +71,7 @@
         }
         const notes = (run.steps || []).filter(s => s.note && (s.status === 'failed' || s.status === 'running' || s.status === 'review'));
         for (const s of notes.slice(0, 2)) el('p', 'rails-run-note', s.name + ': ' + s.note, card);
+        for (const f of (run.flags || []).slice(0, 2)) el('p', 'rails-run-note', '⚑ ' + f, card);
         el('p', 'rails-run-meta dim', run.id + (run.updatedAt ? ' · updated ' + ago(run.updatedAt, now) : ''), card);
       }
     }

@@ -1,7 +1,31 @@
 'use strict';
 // Remote transport chrome. Runtime facts only: never infer completion from a lost
 // connection, and never resend a run. The existing SSE bridge animates the station.
-document.addEventListener('DOMContentLoaded', () => {
+// The words on the status control: the station's own name while all is well, one plain line when it is not
+// ("LevServer offline — retrying"). Pure, so the same text is tested without a browser.
+(function (root, factory) {
+  const api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.RemoteGatewayWords = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  // name: what the Mac helper calls the station ('Gateway' when it reports none: an older Mac app).
+  // state/message: the helper's own plain-language state (connecting, offline, signin, connected, paused).
+  function words({ connected, paused, pending = 0, name = 'Gateway', state = '', message = '' }) {
+    const decisions = `${pending} decision${pending === 1 ? '' : 's'}`;
+    const lost = paused ? `${name} · disconnected`
+      : state && state !== 'connected' ? (message || `${name} offline — retrying`)
+      : state === 'connected' ? `${name} is not answering — retrying`
+      : 'Gateway · Reconnecting';
+    return {
+      lost,
+      label: connected ? (pending ? `${name} · ${decisions}` : name) : lost,
+      status: connected ? (name === 'Gateway' ? 'Connected' : `Connected to ${name}`) : lost
+    };
+  }
+  return { words };
+});
+
+if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', () => {
   if (!window.__STARNET_REMOTE__) return;
   let paintTimer = null;
   const mirror = window.makeRemoteChannels({ channels: Channels,
@@ -56,19 +80,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const timing = text('p', '', details);
   let latest = null, pending = [], busy = false, latency = null, goalCursor = '';
   let connection = 'connecting', pendingSignature = '', opener = null;
+  // What the Mac connection helper calls this station, and its own plain-language state (connecting, offline, ...).
+  let stationName = 'Gateway', clientState = '', stateMessage = '';
   let clientAvailable = false, paused = false, changing = false, pollController = null, connectionGeneration = 0;
   function setText(el, value) { if (el.textContent !== value) el.textContent = value; }
   function render() {
     const connected = connection === 'connected';
     const decisions = `${pending.length} decision${pending.length === 1 ? '' : 's'}`;
     const stateLabel = paused ? 'Disconnected' : connected ? 'Connected' : 'Reconnecting';
-    const compact = !connected ? stateLabel : pending.length ? decisions : '';
-    setText(label, compact ? `Gateway · ${compact}` : 'Gateway');
+    const said = window.RemoteGatewayWords.words({ connected, paused, pending: pending.length, name: stationName, state: clientState, message: stateMessage });
+    setText(label, said.label);
     review.dataset.attention = String(!connected || pending.length > 0);
-    review.setAttribute('aria-label', `Gateway: ${stateLabel.toLowerCase()}${pending.length ? ', ' + decisions : ''}`);
-    setText(announcement, `${stateLabel}${pending.length ? ' · ' + decisions : ''}`);
+    review.setAttribute('aria-label', said.label);
+    setText(announcement, connected ? `${stateLabel}${pending.length ? ' · ' + decisions : ''}` : said.lost);
     dialog.dataset.connected = String(connected);
-    setText(status, stateLabel);
+    setText(status, said.status);
     setText(activity, latest ? `${connected ? '' : 'Last known: '}${latest.runs.length} running · ${pending.length} awaiting a decision` : 'Waiting for station activity.');
     setText(recovery, paused ? 'Disconnected for this app session. Reconnect when you are ready.' : !connected ? 'Reconnecting automatically. Station activity will catch up when the connection returns.' : '');
     recovery.hidden = connected;
@@ -122,7 +148,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const client = await r.json();
     if (generation !== connectionGeneration || changing) return;
     clientAvailable = true; paused = !!client.paused;
-    if (client.host) setText(serverName, client.host);
+    if (client.name) stationName = client.name;
+    clientState = client.state || ''; stateMessage = client.message || '';
+    if (client.name || client.host) setText(serverName, client.name || client.host);
     if (client.user?.login) setText(accountName, '@' + client.user.login);
     if (paused) { connection = 'disconnected'; setText(accountName, 'Disconnected'); }
   }
@@ -173,6 +201,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const timeout = setTimeout(() => controller.abort(), 15000);
     const started = performance.now();
     try {
+      // The helper's own view first, so the status line can say why the station is out of reach.
+      await clientStatus(generation).catch(() => {});
       if (paused) return;
       let r = await fetch('/api/state/snapshot', { cache: 'no-store', signal: controller.signal });
       if (r.status === 403) {

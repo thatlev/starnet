@@ -7,7 +7,8 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { spawn, execFileSync } = require('node:child_process');
 const { createGateway, createClient } = require('./gateway');
-const { readConfig, saveConfig, connectionConfig, sshArgs } = require('./config');
+const { readConfig, saveConfig, connectionConfig, sshArgs, stationName } = require('./config');
+const { describeStation } = require('./station-status');
 const ROOT = path.resolve(__dirname, '..');
 
 function args(argv) {
@@ -84,7 +85,11 @@ async function connect(o) {
   const localPort = port(cfg.port, 8790), remotePort = port(cfg['gateway-port'], 18791);
   await assertFree(localPort);
   const tunnelPort = await freePort();
+  const name = stationName(cfg);
   let ssh, ready = false, stopping = false, paused = false, reconnectTimer, delay = 1000, session = null, login = null, loginAbort = null, generation = 0;
+  // Plain-language status: how long the station has been unreachable, and whether the cause is a GitHub sign-in.
+  let downSince = Date.now(), signinFailures = 0, retryAfter = 0, retryDelay = 2000;
+  const markDown = () => { if (downSince === null) downSince = Date.now(); };
   function startTunnel() {
     if (stopping || paused) return;
     ready = false;
@@ -96,7 +101,7 @@ async function connect(o) {
     ssh.on('error', () => {});
     ssh.once('close', () => {
       if (ssh !== current) return;
-      ready = false;
+      ready = false; markDown();
       if (!stopping && !paused) { console.error('SSH connection lost; reconnecting. Server work continues.'); reconnectTimer = setTimeout(startTunnel, delay); delay = Math.min(delay * 2, 5000); }
     });
     const current = ssh;
@@ -112,28 +117,34 @@ async function connect(o) {
     if (paused || !ready) throw new Error('SSH disconnected');
     if (session && session.expiresAt > Date.now() + 5 * 60 * 1000) return session;
     if (login) return login;
+    // After a failed sign-in the gateway is asked again with growing pauses, so a retry loop can never trip its login limit.
+    if (Date.now() < retryAfter) throw new Error('Waiting to retry');
     const epoch = generation, controller = new AbortController(); loginAbort = controller;
     const timeout = setTimeout(() => controller.abort(), 15000);
     const attempt = (async () => {
+      let githubToken;
+      try { githubToken = ghToken(); } catch (error) { signinFailures++; throw error; }
       const response = await fetch('http://127.0.0.1:' + tunnelPort + '/remote/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ githubToken: ghToken() }), signal: controller.signal
+        body: JSON.stringify({ githubToken }), signal: controller.signal
       });
+      if (response.status === 401 || response.status === 403) signinFailures++;
       if (!response.ok) throw new Error('GitHub station login failed (' + response.status + ')');
       const result = await response.json();
       if (result.user?.id !== Number(cfg.owner)) throw new Error('The gateway returned an unexpected owner');
       if (generation !== epoch || paused) throw new Error('Connection changed');
-      session = result;
+      session = result; signinFailures = 0; retryAfter = 0; retryDelay = 2000; downSince = null;
       console.log('Connected as ' + result.user.login + ' · execution on ' + cfg.host);
       return result;
-    })().finally(() => { clearTimeout(timeout); if (login === attempt) { login = null; loginAbort = null; } });
+    })().catch(error => { retryAfter = Date.now() + retryDelay; retryDelay = Math.min(retryDelay * 2, 15000); throw error; })
+      .finally(() => { clearTimeout(timeout); if (login === attempt) { login = null; loginAbort = null; } });
     login = attempt;
     return attempt;
   };
   async function changeConnection(reconnect) {
     paused = true; generation++; loginAbort?.abort(); loginAbort = null; login = null;
     clearTimeout(reconnectTimer);
-    const previous = session; session = null;
+    const previous = session; session = null; signinFailures = 0; retryAfter = 0; retryDelay = 2000; markDown();
     if (ready && previous) {
       try { await fetch('http://127.0.0.1:' + tunnelPort + '/remote/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + previous.token }, signal: AbortSignal.timeout(2000) }); } catch (_) {}
     }
@@ -149,15 +160,26 @@ async function connect(o) {
     if (reconnect && !stopping) { paused = false; delay = 1000; startTunnel(); }
   }
   startTunnel();
-  const client = createClient({ gatewayPort: tunnelPort, localPort, getSession, invalidateSession: () => { session = null; }, connection: {
-    status: () => ({ host: cfg.host, paused, connected: ready && !!session, user: session?.user || null }),
+  const client = createClient({ gatewayPort: tunnelPort, localPort, getSession, invalidateSession: () => { session = null; retryAfter = 0; markDown(); }, connection: {
+    status: () => {
+      const connected = ready && !!session;
+      if (connected) downSince = null; else markDown();
+      return { host: cfg.host, name, paused, connected, user: session?.user || null,
+        ...describeStation({ name, paused, connected, signin: signinFailures >= 3, downMs: connected ? 0 : Date.now() - downSince }) };
+    },
     reconnect: () => changeConnection(true), disconnect: () => changeConnection(false)
   } });
+  // A dropped session (server restart, expiry) is signed in again without waiting for a page request.
+  const sessionTimer = setInterval(() => {
+    if (stopping || paused || !ready || login || (session && session.expiresAt > Date.now() + 5 * 60 * 1000)) return;
+    getSession().catch(() => {});
+  }, 1000);
+  sessionTimer.unref();
   await new Promise((resolve, reject) => { client.once('error', reject); client.listen(localPort, '127.0.0.1', resolve); });
   console.log('Mac station: http://127.0.0.1:' + localPort);
   const stop = () => {
     if (stopping) return;
-    stopping = true; loginAbort?.abort(); clearTimeout(reconnectTimer); client.closeAllConnections(); client.close(); ssh?.kill('SIGTERM');
+    stopping = true; loginAbort?.abort(); clearTimeout(reconnectTimer); clearInterval(sessionTimer); client.closeAllConnections(); client.close(); ssh?.kill('SIGTERM');
     setTimeout(() => process.exit(0), 200).unref();
   };
   process.on('SIGINT', stop); process.on('SIGTERM', stop);

@@ -115,6 +115,11 @@ fn select(app: &AppHandle, choice: &str) -> Result<(), String> {
 }
 
 fn helper_json(port: u16, route: &str) -> Result<serde_json::Value, String> {
+    helper_get(port, route, "")
+}
+
+/// A loopback GET to the connection helper or the station proxy. `extra` is whole header lines (each ending `\r\n`).
+fn helper_get(port: u16, route: &str, extra: &str) -> Result<serde_json::Value, String> {
     let mut stream = TcpStream::connect_timeout(
         &format!("127.0.0.1:{port}").parse().unwrap(),
         Duration::from_secs(1),
@@ -128,7 +133,7 @@ fn helper_json(port: u16, route: &str) -> Result<serde_json::Value, String> {
         .map_err(|e| e.to_string())?;
     write!(
         stream,
-        "GET {route} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        "GET {route} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n{extra}Connection: close\r\n\r\n"
     )
     .map_err(|e| e.to_string())?;
     let mut bytes = Vec::new();
@@ -427,6 +432,100 @@ fn saved_station_port() -> Option<u16> {
     station_port_from_config(&std::fs::read(home.join(".config/starnet-remote/config.json")).ok()?)
 }
 
+/// How the saved station is called on screen: its `name`, else its SSH alias without any `user@`.
+fn station_name_from_config(bytes: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let named = value
+        .get("name")
+        .and_then(|name| name.as_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+    let host = || {
+        value
+            .get("host")
+            .and_then(|host| host.as_str())
+            .map(|host| host.rsplit('@').next().unwrap_or(host).trim())
+            .filter(|host| !host.is_empty())
+    };
+    named.or_else(host).map(str::to_string)
+}
+
+fn saved_station_name() -> Option<String> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    station_name_from_config(&std::fs::read(home.join(".config/starnet-remote/config.json")).ok()?)
+}
+
+/// What one look at the saved station says while the app is starting.
+#[derive(Debug, PartialEq)]
+enum Launch {
+    /// The connection is up: open the station on this local port.
+    Open(u16),
+    /// Not up yet: keep waiting, and show these words.
+    Wait(String),
+    /// No saved connection at all. Only then does Connection Setup come up by itself.
+    Setup,
+}
+
+fn launch_decision(
+    health: Option<&serde_json::Value>,
+    client: Option<&serde_json::Value>,
+    name: &str,
+) -> Launch {
+    let connecting = || Launch::Wait(format!("Connecting to {name}…"));
+    let Some(health) = health else {
+        return connecting();
+    };
+    if health["configured"] != true {
+        return Launch::Setup;
+    }
+    let Some(port) = health["port"]
+        .as_u64()
+        .filter(|port| (1024..=65535).contains(port) && *port != u64::from(SETUP_PORT))
+    else {
+        return connecting();
+    };
+    match client {
+        Some(status) if status["connected"] == true => Launch::Open(port as u16),
+        Some(status) => match status["message"].as_str().filter(|text| !text.is_empty()) {
+            Some(message) => Launch::Wait(message.to_string()),
+            None => connecting(),
+        },
+        None => connecting(),
+    }
+}
+
+fn launch_step() -> Launch {
+    let name = saved_station_name().unwrap_or_else(|| "your station".into());
+    let health = helper_json(SETUP_PORT, "/health").ok();
+    let client = health
+        .as_ref()
+        .and_then(|health| health["port"].as_u64())
+        .filter(|port| (1024..=65535).contains(port) && *port != u64::from(SETUP_PORT))
+        .and_then(|port| {
+            helper_get(port as u16, "/remote/client/status", "X-StarNet-Client: 1\r\n").ok()
+        });
+    launch_decision(health.as_ref(), client.as_ref(), &name)
+}
+
+/// Words for the startup page while the station is out of reach. The page has no scripts of its own; this native
+/// call only sets one line of text on it, and does nothing once the window has left that page.
+fn show_startup_status(app: &AppHandle, message: &str) {
+    let label = app
+        .state::<DesktopState>()
+        .startup_label
+        .lock()
+        .ok()
+        .and_then(|label| label.clone());
+    let window = label
+        .and_then(|label| app.get_webview_window(&label))
+        .or_else(|| app.get_webview_window("main"));
+    if let (Some(window), Ok(text)) = (window, serde_json::to_string(message)) {
+        let _ = window.eval(format!(
+            "(()=>{{const e=document.getElementById('station-status');if(e&&e.textContent!=={text})e.textContent={text};}})()"
+        ));
+    }
+}
+
 /// One remote window per station port. A startup window opens on the bundled startup page and is
 /// revealed once that page has painted; it may show that page only until it first opens its station.
 fn build_remote_window(
@@ -702,13 +801,24 @@ pub fn boot(app: &AppHandle, choice: &str) -> Result<(), Box<dyn std::error::Err
         true,
         None::<&str>,
     )?;
-    let station = Submenu::with_items(app, "Station", true, &[&setup, &local])?;
+    // The saved station gets its own entry, so going back to it from This Computer is one click.
+    let remote = saved_station_name()
+        .map(|name| MenuItem::with_id(app, "station_remote", format!("Use {name}"), true, None::<&str>))
+        .transpose()?;
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::new();
+    if let Some(remote) = &remote {
+        items.push(remote);
+    }
+    items.push(&setup);
+    items.push(&local);
+    let station = Submenu::with_items(app, "Station", true, &items)?;
     let menu = app.menu().unwrap_or(Menu::default(app)?);
     menu.append(&station)?;
     app.set_menu(menu)?;
     app.on_menu_event(|app, event| match event.id().as_ref() {
         "station_setup" => show_setup(app.clone()),
         "station_local" => choose_local(app.clone()),
+        "station_remote" => choose_remote(app.clone()),
         _ => {}
     });
     let monitor = app.clone();
@@ -737,43 +847,65 @@ pub fn boot(app: &AppHandle, choice: &str) -> Result<(), Box<dyn std::error::Err
         }
     });
     if choice == "remote" {
+        // The saved station is the default. Launching never lands on the chooser because the connection is slow or
+        // down: the startup page says what is happening and the station opens the moment it is reachable.
         let app = app.clone();
         std::thread::spawn(move || {
             if let Err(error) = start_helper(&app) {
                 report(&app, error);
-                return;
             }
-            let deadline = Instant::now() + Duration::from_secs(20);
-            while Instant::now() < deadline {
-                if let Ok(port) = station_port() {
-                    let handle = app.clone();
-                    let _ = app.run_on_main_thread(move || {
-                        if handle
-                            .state::<DesktopState>()
-                            .selected
-                            .lock()
-                            .map(|s| s.as_str() != "remote")
-                            .unwrap_or(true)
-                        {
-                            return;
-                        }
-                        if let Err(error) = show_remote_window(&handle, port) {
-                            report(&handle, error);
-                        }
-                    });
+            let began = Instant::now();
+            let mut helper_checked = Instant::now();
+            let mut sent = (String::new(), Instant::now());
+            loop {
+                if app.state::<AppState>().shutting_down.load(Ordering::SeqCst) {
                     return;
                 }
-                // a local loopback check; a short interval opens the station as soon as the connection is up
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            if app
-                .state::<DesktopState>()
-                .selected
-                .lock()
-                .map(|s| s.as_str() == "remote")
-                .unwrap_or(false)
-            {
-                show_setup(app);
+                // Someone who opened Connection Setup or chose another station owns the screen now.
+                let chose_elsewhere = app
+                    .state::<DesktopState>()
+                    .selected
+                    .lock()
+                    .map(|s| s.as_str() != "remote")
+                    .unwrap_or(true)
+                    || app.get_webview_window(SETUP_LABEL).is_some();
+                if chose_elsewhere {
+                    return;
+                }
+                match launch_step() {
+                    Launch::Open(port) => {
+                        let handle = app.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            if let Err(error) = show_remote_window(&handle, port) {
+                                report(&handle, error);
+                            }
+                        });
+                        return;
+                    }
+                    Launch::Setup => {
+                        show_setup(app);
+                        return;
+                    }
+                    Launch::Wait(message) => {
+                        if message != sent.0 || sent.1.elapsed() > Duration::from_secs(1) {
+                            show_startup_status(&app, &message);
+                            sent = (message, Instant::now());
+                        }
+                    }
+                }
+                // A helper that stopped or never started is started again quietly (the 4 s monitor does the same).
+                if helper_checked.elapsed() > Duration::from_secs(5) {
+                    helper_checked = Instant::now();
+                    if helper_json(SETUP_PORT, "/health").is_err() {
+                        let _ = start_helper(&app);
+                    }
+                }
+                // a local loopback check: quick at first so the station opens as soon as the connection is up
+                std::thread::sleep(if began.elapsed() < Duration::from_secs(30) {
+                    Duration::from_millis(150)
+                } else {
+                    Duration::from_secs(1)
+                });
             }
         });
     } else if choice == "setup" {
@@ -846,21 +978,22 @@ pub fn defer_exit(app: &AppHandle, code: Option<i32>) -> bool {
     true
 }
 
-pub fn tray_status(app: &AppHandle) -> Option<(&'static str, &'static str)> {
+pub fn tray_status(app: &AppHandle) -> Option<(String, String)> {
     if local_started(app) {
         return None;
     }
     let state = app.try_state::<DesktopState>()?;
     let remote = state.selected.lock().ok()?.as_str() == "remote";
     Some(if remote {
+        let name = saved_station_name().unwrap_or_else(|| "Your station".into());
         (
-            "StarNet · Remote uplink",
-            "Remote station: closing this app leaves the server running",
+            format!("StarNet · {name}"),
+            format!("{name}: closing this app leaves the server running"),
         )
     } else {
         (
-            "StarNet · Choose a station",
-            "Choose this computer or a remote station",
+            "StarNet · Choose a station".into(),
+            "Choose this computer or a remote station".into(),
         )
     })
 }
@@ -956,6 +1089,62 @@ mod tests {
             b"not json",
         ] {
             assert_eq!(station_port_from_config(invalid), None);
+        }
+    }
+    #[test]
+    fn the_saved_station_is_called_by_its_name_or_its_alias() {
+        assert_eq!(
+            station_name_from_config(br#"{"host":"my-server","name":"LevServer","owner":1}"#).as_deref(),
+            Some("LevServer")
+        );
+        assert_eq!(
+            station_name_from_config(br#"{"host":"my-server","owner":1}"#).as_deref(),
+            Some("my-server")
+        );
+        assert_eq!(
+            station_name_from_config(br#"{"host":"lev@box.example.com","name":"  "}"#).as_deref(),
+            Some("box.example.com")
+        );
+        assert_eq!(station_name_from_config(br#"{"owner":1}"#), None);
+        assert_eq!(station_name_from_config(b"not json"), None);
+    }
+    #[test]
+    fn launch_waits_for_the_saved_station_and_asks_to_set_up_only_when_nothing_is_saved() {
+        use serde_json::json;
+        let health = json!({"configured": true, "port": 8790});
+        let up = json!({"connected": true, "message": "Connected to LevServer"});
+        let down = json!({"connected": false, "message": "LevServer offline — retrying"});
+        let name = "LevServer";
+        // the helper is not answering yet: wait, never the chooser
+        assert_eq!(
+            launch_decision(None, None, name),
+            Launch::Wait("Connecting to LevServer…".into())
+        );
+        assert_eq!(launch_decision(Some(&health), Some(&up), name), Launch::Open(8790));
+        // an outage keeps waiting and shows the helper's own words
+        assert_eq!(
+            launch_decision(Some(&health), Some(&down), name),
+            Launch::Wait("LevServer offline — retrying".into())
+        );
+        assert_eq!(
+            launch_decision(Some(&health), None, name),
+            Launch::Wait("Connecting to LevServer…".into())
+        );
+        assert_eq!(
+            launch_decision(Some(&health), Some(&json!({"connected": false})), name),
+            Launch::Wait("Connecting to LevServer…".into())
+        );
+        // only a missing saved connection opens Connection Setup by itself
+        assert_eq!(
+            launch_decision(Some(&json!({"configured": false, "port": 8790})), None, name),
+            Launch::Setup
+        );
+        // a port that is not a station port is never opened
+        for port in [json!(18790), json!(80), json!(null)] {
+            assert_eq!(
+                launch_decision(Some(&json!({"configured": true, "port": port})), Some(&up), name),
+                Launch::Wait("Connecting to LevServer…".into())
+            );
         }
     }
     #[test]

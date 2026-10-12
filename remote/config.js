@@ -9,6 +9,14 @@ function checkedPort(value, fallback, minimum = 1024) {
   if (!Number.isInteger(n) || n < minimum || n > 65535) throw new Error('Enter a valid port number (' + minimum + '–65535).');
   return n;
 }
+// What the station is called on screen. Optional: a saved connection without one is shown by its SSH alias.
+function checkedName(value) {
+  const name = String(value ?? '').trim().replace(/\s+/g, ' ');
+  if (!name) return '';
+  if (name.length > 40 || /[\u0000-\u001f\u007f<>]/.test(name)) throw new Error('Name this server in up to 40 plain characters.');
+  return name;
+}
+function stationName(cfg) { return (cfg && (cfg.name || String(cfg.host || '').replace(/^.*@/, ''))) || 'your server'; }
 function connectionConfig(input) {
   const host = String(input.host || '').trim();
   if (!/^(?:[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}@)?[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$/.test(host)) {
@@ -18,6 +26,8 @@ function connectionConfig(input) {
   if (!Number.isSafeInteger(owner) || owner < 1) throw new Error('Sign in with the GitHub account that owns this station.');
   const cfg = { host, owner, port: checkedPort(input.port, 8790), 'gateway-port': checkedPort(input['gateway-port'], 18791) };
   if (cfg.port === 18790) throw new Error('Port 18790 is reserved for Connection Setup.');
+  const name = checkedName(input.name);
+  if (name) cfg.name = name;
   if (input['ssh-port']) cfg['ssh-port'] = checkedPort(input['ssh-port'], 22, 1);
   return cfg;
 }
@@ -69,4 +79,4 @@ function sshArgs(cfg, interactive = false) {
   if (cfg['ssh-port']) out.push('-p', String(cfg['ssh-port']));
   return out;
 }
-module.exports = { configPath, connectionConfig, readConfig, saveConfig, saveConnection, planConnection, checkedPort, sshArgs };
+module.exports = { configPath, connectionConfig, stationName, checkedName, readConfig, saveConfig, saveConnection, planConnection, checkedPort, sshArgs };

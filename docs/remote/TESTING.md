@@ -17,17 +17,24 @@ Automated verification already exercises a synthetic 429 provider, process resta
 1. Open the rebuilt **StarNet**. The loading screen should use the same official outlined StarNet wordmark as the station header. Your existing server, character, custom model and keys should remain. A depleted provider must still let you open Settings.
 2. Open **Settings → Providers**, scroll near the bottom immediately, and keep reading for 30 seconds. Repeat after a Gateway reconnect. There should be no upward shift or repeated card fade. Appearance → Screen Flicker remains available if you deliberately want the CRT effect.
 3. Reopen an unfinished conversation. The right panel follows current upstream v0.12.3, including its dark background, answer field and expandable suggestions. Type an unsent draft, reopen the app and confirm it is retained.
-4. Open **Station → Connection Setup…** (Command-K). Your SSH host is prefilled. **Check sign-in** should identify your GitHub account. **Test & save** should verify SSH, ownership, runtime and live events without sending a model request. **Open station** should return to the same saved station.
+4. Open **Station → Connection Setup…** (Command-K). Your SSH host and name are prefilled, the saved server is the first choice and **This Computer** the second. **Check sign-in** should identify your GitHub account. **Test & save** should verify SSH, ownership, runtime and live events without sending a model request. **Open station** should return to the same saved station.
 5. Enter an unreachable test hostname or wrong port and test. Cancel a check too. Both must retain the prior saved connection; **Return to station** should still work. Restore the correct form details afterward.
 6. The **new server** path is for a disposable/fresh Linux machine, not the existing station. Review the install details, launch the Terminal installer, then test and open the resulting empty station. The current package includes Linux x86_64 and arm64 runtimes; arm64 installation still needs hardware acceptance if only x86_64 was available during validation.
 
-7. In **Station → Connection Setup**, choose **This Computer**. It should open StarNet’s original local onboarding or your existing local station without GitHub sign-in. Return to **Remote Uplink** and open your saved connection. Quit and reopen: the last selected location should resume. Your local and remote stations must remain separate.
+7. In **Station → Connection Setup**, choose **This Computer**. It should open StarNet’s original local onboarding or your existing local station without GitHub sign-in. Return to your server (**Station → Use LevServer**, or the first choice in Connection Setup) and open your saved connection. Quit and reopen: the last selected location should resume. Your local and remote stations must remain separate.
 8. On a fresh user profile, the chooser should appear with **New Server** selected, no personal host prefilled, and the bundled installer available. Do not reset your working profile to perform this check.
 
 9. Click **Gateway** at the bottom right. Confirm the server and GitHub account. **Connection Settings** should open the same chooser as the Station menu. **Disconnect this app** should pause only this viewer; **Reconnect** should restore it with the same station and draft. This does not sign out of GitHub or stop server work.
 10. Narrow Settings and check the saved API key cards: long endpoint URLs must wrap without crossing the buttons. During a connection check, **Cancel** and **Test & Save** must have equal bounds. On first setup only, a successful check should open the station automatically. The startup wordmark and message should remain centered.
 
 Public release signing/notarization and the official upstream PR are separate from this local candidate. Do not erase working data or revoke real provider keys merely to simulate a fresh install.
+
+## Opening straight into the saved server
+
+1. With a saved server selected, quit and reopen StarNet. One window should show "Connecting to LevServer…" briefly and then the station with its crew. The chooser must not appear.
+2. Quit StarNet, turn the network off (or block the server), and reopen. The window should stay on the opening page saying "LevServer offline — retrying" and must not open Connection Setup by itself. Turn the network on: the station opens by itself within a few seconds.
+3. With the station open, interrupt only this Mac's SSH connection for the server. The bottom-right control should say "LevServer offline — retrying" after a few seconds and return to "LevServer" on its own; the server keeps running throughout.
+4. From the opening page, **Connection Setup** (or Command-K) still opens the chooser on request. **Station → Use This Computer** opens the local station; **Station → Use LevServer** returns.
 
 ## Startup window lifecycle
 

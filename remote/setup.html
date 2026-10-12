@@ -23,7 +23,7 @@
     <header class="cc-console-head">
       <div class="cc-titlebar">
         <span class="logo-img" role="img" aria-label="StarNet"></span>
-        <span class="cc-tb-rule"></span><span class="cc-tb-mode">REMOTE UPLINK</span>
+        <span class="cc-tb-rule"></span><span id="mode-label" class="cc-tb-mode">CONNECTION SETUP</span>
         <button id="return" type="button" class="btn-sm" hidden>‹ RETURN TO STATION</button>
       </div>
       <div class="ov-title-row"><h2 id="setup-title">CONNECT YOUR STATION</h2></div>
@@ -32,8 +32,8 @@
 
     <div id="location-choice" class="ov-cfg" hidden>
       <div class="ov-cards ov-approve" role="group" aria-label="Where your agent runs">
-        <button id="local" type="button" class="ov-card"><span class="ov-card-ic" aria-hidden="true">▣</span><span class="ov-card-nm">THIS COMPUTER</span><span class="hint">Run StarNet here, with your local files and apps.</span></button>
-        <button id="remote-choice" type="button" class="ov-card sel" aria-pressed="true"><span class="ov-card-ic" aria-hidden="true">⌁</span><span class="ov-card-nm">REMOTE UPLINK</span><span class="hint">Connect to another computer or your own gateway.</span><span class="ov-card-pick" aria-hidden="true">✓</span></button>
+        <button id="remote-choice" type="button" class="ov-card sel" aria-pressed="true"><span class="ov-card-ic" aria-hidden="true">⌁</span><span id="station-card-name" class="ov-card-nm">YOUR SERVER</span><span id="station-card-hint" class="hint">Connect to a computer you run StarNet on.</span><span class="ov-card-pick" aria-hidden="true">✓</span></button>
+        <button id="local" type="button" class="ov-card"><span class="ov-card-ic" aria-hidden="true">▣</span><span class="ov-card-nm">THIS COMPUTER</span><span class="hint">The original local mode: StarNet runs only on this Mac, with its own files and apps.</span></button>
       </div>
     </div>
     <form id="connection" class="setup-body">
@@ -70,6 +70,11 @@
           <label for="host">SSH ADDRESS</label>
           <input id="host" name="host" placeholder="you@server.example.com or SSH alias" autocomplete="off" autocapitalize="none" spellcheck="false" required maxlength="318" aria-describedby="host-help">
           <p id="host-help" class="hint">Use the address from your SSH client. Existing keys and aliases work here.</p>
+        </div>
+        <div class="ov-field">
+          <label for="name">NAME</label>
+          <input id="name" name="name" placeholder="LevServer" autocomplete="off" spellcheck="false" maxlength="40" aria-describedby="name-help">
+          <p id="name-help" class="hint">What StarNet calls this server in its status line. Optional.</p>
         </div>
         <details class="ov-field">
           <summary>CONNECTION OPTIONS</summary>

@@ -9,6 +9,7 @@
 #station-host > div { max-width: 100%; }
 #station-host .logo-img { margin: 0 auto var(--s-3); }
 #station-host h2 { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
+#station-host a { color: inherit; }
 
 /* boot veil — the neutral holding-card shown during init()'s async gap before the boot router picks a
    real screen. Solid ink so there's never a flash of the wrong screen (the old #screen-connect .active

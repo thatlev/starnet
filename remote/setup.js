@@ -5,7 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { readJson } = require('./gateway');
 const { UI_ASSETS } = require('./ui-assets');
-const { connectionConfig, saveConnection, planConnection } = require('./config');
+const { connectionConfig, saveConnection, planConnection, stationName } = require('./config');
 const { assertFree } = require('./cli');
 const { githubUser, probeConnection } = require('./connection');
 
@@ -56,7 +56,7 @@ class SetupController {
       // No await between cancellation check and commit. Failed or cancelled probes never touch the saved connection.
       this.config = saveConnection(cfg, this.configFile);
       this.onSave(this.config);
-      this.state = { phase: 'connected', message: 'Connection verified. Your station runs on ' + cfg.host + '.' };
+      this.state = { phase: 'connected', message: 'Connection verified. Your station runs on ' + stationName(cfg) + '.' };
     });
   }
   cancel() { const job = this.job; this.job = null; job?.abort(); this.state = { phase: 'idle', message: 'Check cancelled. Your saved connection is unchanged.' }; }
@@ -81,7 +81,7 @@ function createSetupServer(controller, { port = 18790, root = __dirname } = {}) 
     res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'");
     if (req.headers.host !== `127.0.0.1:${server.address().port}` || (req.headers.origin && req.headers.origin !== origin) || req.headers['sec-fetch-site'] === 'cross-site') return send(403, { error: 'Untrusted origin' });
-    if (req.url === '/health' && req.method === 'GET') return send(200, { configured: !!controller.config, port: controller.config?.port || 8790 });
+    if (req.url === '/health' && req.method === 'GET') return send(200, { configured: !!controller.config, port: controller.config?.port || 8790, name: controller.config ? stationName(controller.config) : null });
     if (files[req.url] && req.method === 'GET') {
       const [file, type] = files[req.url];
       try {

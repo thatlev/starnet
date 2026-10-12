@@ -18,7 +18,7 @@ StarNet desktop app, and the upstream [README](README.md), [install guide](INSTA
 
 | Area | What you get |
 | --- | --- |
-| **One app, two places** | The standard desktop app asks where the station lives: **This Computer** (the original local runtime, onboarding and keychain) or **Remote Uplink** (another machine). Switch any time with **Station → Connection Setup…** (Command-K); the last choice resumes on launch. |
+| **One app, two places** | The standard desktop app runs the station in one of two places: **This Computer** (the original local runtime, onboarding and keychain) or your own server. A fresh installation asks once. After a server is saved, every launch opens it directly, with no chooser, and shows it by its name (for example **LevServer**). A slow or lost connection never puts the chooser in the way: the opening page says "Connecting to LevServer…" or "LevServer offline — retrying" and opens the station itself when the connection is back. **This Computer** stays one step away in **Station → Connection Setup…** (Command-K) and **Station → Use This Computer**; the last choice resumes on launch. |
 | **A station that never sleeps** | In remote mode the server owns the runtime, tools, delegation, scheduled workflows and standing goals. Closing the Mac app only closes the window — work keeps running headless under systemd. |
 | **Owner-only access** | You sign in with GitHub (through the GitHub CLI). The server admits exactly one configured GitHub account and issues a short-lived session. Its ports bind only to the server's loopback; the Mac reaches them through SSH with strict host-key checking. Nothing is exposed to the internet. |
 | **Guided setup** | The connection screen can install a fresh server for you (in Terminal, with visible progress), and **Test & save** checks SSH, ownership, runtime health and the live event stream without running an agent or spending model credits. |
@@ -67,11 +67,12 @@ x86_64 or arm64 machine with systemd, SSH access and sudo.
    Mac only. It downloads pinned Node and GitHub CLI binaries, verifies them against their
    official checksums, packages the server archive from Git-tracked sources and installs
    `/Applications/StarNet.app`. Any previous app is moved aside, and connection settings are kept.
-2. **Open StarNet** and choose **Remote Uplink** (or **This Computer** for the classic local station).
+2. **Open StarNet** and choose your server (or **This Computer** for the classic local station).
 3. **Sign in with GitHub** using the device code shown, then enter your server's SSH alias or
    `user@host`.
 4. For a fresh server, choose **New Server → Open server installer in Terminal**. For an existing
-   one, choose **Already Installed**. Then **Test & save** and **Open your station**.
+   one, choose **Already Installed**. Give it a **Name** if you like (it is shown in the status line;
+   without one the SSH alias is shown). Then **Test & save** and **Open your station**.
 5. Add model access inside the station under **Settings → Providers**, or point it at your own
    gateway under **Settings → Gateway**.
 
