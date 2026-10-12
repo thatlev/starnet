@@ -14,8 +14,10 @@
        steps: [ { name|id|step, status|state, started_at|startedAt|started, finished_at|ended_at|ended|endedAt,
                   note|message|error|detail } ]
            | { <name>: { status, ... } | "<status>" } }
-   The Kedr pipeline (autopilot/pipeline/runstate.py) writes run status running|failed|delivered|approved|rejected|
-   scheduled: "delivered" means the video is in Lev's Telegram waiting for his approval. */
+   The Kedr pipeline (autopilot/pipeline/runstate.py) writes run status running|paused|failed|staged|delivered|
+   approved|rejected|scheduled: "paused" = stopped on purpose by `make --until` (resumable), "staged" = the Videos
+   message was written into the run only (nothing reached Telegram), "delivered" = in Lev's Telegram waiting for
+   his approval. */
 
 const MAX_RUNS = 40;
 const MAX_BYTES = 512 * 1024;
@@ -23,16 +25,18 @@ const RUN_ID_RE = /^[A-Za-z0-9._-]{1,120}$/;
 
 const STATUS = {
   pending: 'pending', queued: 'pending', waiting: 'pending', todo: 'pending', new: 'pending', planned: 'pending',
+  paused: 'pending', stopped: 'pending', on_hold: 'pending', held: 'pending',
   running: 'running', in_progress: 'running', 'in-progress': 'running', active: 'running', started: 'running', working: 'running',
   done: 'done', ok: 'done', success: 'done', succeeded: 'done', passed: 'done', complete: 'done', completed: 'done', made: 'done', ready: 'done',
   failed: 'failed', error: 'failed', errored: 'failed', crashed: 'failed', blocked: 'failed',
   skipped: 'skipped', skip: 'skipped', 'n/a': 'skipped',
   needs_approval: 'review', awaiting_approval: 'review', review: 'review', approval: 'review', needs_review: 'review',
   delivered: 'review',
-  approved: 'done', scheduled: 'done', posted: 'done', cancelled: 'skipped', canceled: 'skipped', rejected: 'skipped'
+  approved: 'done', scheduled: 'done', posted: 'done', staged: 'done', cancelled: 'skipped', canceled: 'skipped', rejected: 'skipped'
 };
 // Run states whose own word says more than the rail state (shown on the chip as is).
-const OUTCOME = { approved: 'approved', scheduled: 'scheduled', posted: 'posted', rejected: 'rejected', delivered: 'waiting for Lev' };
+const OUTCOME = { approved: 'approved', scheduled: 'scheduled', posted: 'posted', rejected: 'rejected', delivered: 'waiting for Lev',
+  paused: 'paused', stopped: 'stopped', on_hold: 'on hold', held: 'on hold', staged: 'staged (not sent)' };
 
 function normStatus(value) {
   const key = String(value == null ? '' : value).trim().toLowerCase().replace(/\s+/g, '_');
@@ -83,7 +87,7 @@ function overall(explicit, steps) {
 function normRun(doc, dirName, mtimeMs) {
   const steps = normSteps(doc.steps);
   const explicit = first(doc, ['status', 'state']);
-  const rawStatus = String(explicit == null ? '' : explicit).trim().toLowerCase();
+  const rawStatus = String(explicit == null ? '' : explicit).trim().toLowerCase().replace(/\s+/g, '_');
   const named = str(first(doc, ['current_step', 'currentStep']), 60);
   const flags = Array.isArray(doc.flags) ? doc.flags.slice(0, 5).map(f => str(typeof f === 'string' ? f : JSON.stringify(f), 240)).filter(Boolean) : [];
   return {

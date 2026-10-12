@@ -71,8 +71,21 @@ try {
     steps: [{ name: 'brief', status: 'done' }] }, Date.parse('2026-10-11T16:00:00Z'));
   write('20261012-0720-art', { run_id: '20261012-0720-art', channel: 'thatlev', title: 'ART', status: 'running', current_step: 'art',
     steps: [{ name: 'brief', status: 'done' }, { name: 'art', status: 'pending' }] }, Date.parse('2026-10-11T15:00:00Z'));
+  // "paused" (make --until) and "staged" (--stage: nothing reached Telegram), exactly as runstate.py writes them
+  write('20261012-0714-paused', { run_id: '20261012-0714-paused', kind: 'pipeline', channel: 'thatlev', title: 'OPUS DECOMPILES',
+    status: 'paused', current_step: 'evidence',
+    steps: [{ name: 'brief', status: 'done' }, { name: 'evidence', status: 'done' }, { name: 'copy', status: 'pending' }] },
+    Date.parse('2026-10-11T14:00:00Z'));
+  write('20261012-0730-staged', { run_id: '20261012-0730-staged', channel: 'thatlev', title: 'STAGED', status: 'staged',
+    steps: [{ name: 'deliver', status: 'done' }] }, Date.parse('2026-10-11T13:00:00Z'));
   out = readRails({ root });
   const byId = Object.fromEntries(out.channels.flatMap(c => c.runs).map(r => [r.id, r]));
+  const paused = byId['20261012-0714-paused'];
+  assert.equal(paused.status, 'pending', '"paused" is not unknown'); n++;
+  assert.equal(paused.outcome, 'paused', 'the chip says paused'); n++;
+  assert.equal(paused.current, 'evidence', 'where it stopped'); n++;
+  assert.equal(byId['20261012-0730-staged'].status, 'done'); assert.equal(byId['20261012-0730-staged'].outcome, 'staged (not sent)'); n += 2;
+  assert.equal(normStatus('paused'), 'pending'); assert.equal(normStatus('On Hold'), 'pending'); n += 2;
   const theo = byId['20261012-0700-theo-linux'];
   assert.equal(theo.status, 'review', '"delivered" = waiting for Lev'); n++;
   assert.equal(theo.outcome, 'waiting for Lev'); n++;
@@ -84,7 +97,7 @@ try {
   assert.equal(byId['20261012-0710-rejected'].status, 'skipped'); assert.equal(byId['20261012-0710-rejected'].outcome, 'rejected'); n += 2;
   assert.equal(byId['20261012-0720-art'].current, 'art'); assert.equal(byId['20261012-0720-art'].outcome, ''); n += 2;
   assert.equal(normStatus('delivered'), 'review'); assert.equal(normStatus('rejected'), 'skipped'); n += 2;
-  for (const id of ['20261012-0700-theo-linux', '20261012-0710-rejected', '20261012-0720-art']) fs.rmSync(path.join(runs, id), { recursive: true });
+  for (const id of ['20261012-0700-theo-linux', '20261012-0710-rejected', '20261012-0720-art', '20261012-0714-paused', '20261012-0730-staged']) fs.rmSync(path.join(runs, id), { recursive: true });
 
   // limit keeps the newest manifests
   out = readRails({ root, limit: 1 });
