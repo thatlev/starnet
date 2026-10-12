@@ -18,10 +18,13 @@
     if (s < 86400) return Math.round(s / 3600) + 'h ago';
     return Math.round(s / 86400) + 'd ago';
   }
-  // A plain summary for the dock button: how many rails are moving, waiting or failed.
+  // A plain summary for the dock button: how many video rails are moving, waiting or failed. Runs without a channel
+  // (factory tools such as crowd replies, sounds or evidence checks) stay in the panel under UNASSIGNED but are not
+  // counted: an old failed tool run must not keep the button lit for a video that is fine.
   function summary(data) {
     const counts = { running: 0, review: 0, failed: 0, total: 0 };
     for (const c of (data && data.channels) || []) for (const r of c.runs || []) {
+      if (c.id === 'unassigned') continue;
       counts.total++;
       if (counts[r.status] != null) counts[r.status]++;
     }

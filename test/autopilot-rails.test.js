@@ -103,6 +103,22 @@ try {
   out = readRails({ root, limit: 1 });
   assert.equal(out.channels.length, 1); assert.equal(out.channels[0].runs[0].id, '096-haiku'); n += 2;
 
+  // tool runs without a channel never push a video out: 60 newer tool runs, the older video stays, tools cap at 10
+  const base = Date.parse('2026-10-12T00:00:00Z');
+  write('200-video-waiting', { run_id: '200-video-waiting', channel: 'thatlev', kind: 'pipeline', status: 'delivered', steps: [{ name: 'deliver', status: 'ok' }] }, base);
+  for (let i = 0; i < 60; i++) write('crowd-replies-' + String(i).padStart(2, '0'), { run_id: 'crowd-replies-' + i, kind: 'crowd-replies', status: 'ok', steps: [] }, base + 60000 * (i + 1));
+  out = readRails({ root });
+  const waiting = out.channels.find(c => c.id === 'thatlev').runs.find(r => r.id === '200-video-waiting');
+  assert.ok(waiting && waiting.outcome === 'waiting for Lev', 'the video waiting for Lev is still listed'); n++;
+  const tool = out.channels.find(c => c.id === 'unassigned');
+  assert.equal(tool.runs.length, 10, 'tool runs are capped at 10'); n++;
+  assert.equal(tool.runs[0].id, 'crowd-replies-59', 'the newest tool run comes first'); n++;
+  assert.ok(out.total >= 62, 'total still counts every manifest'); n++;
+  out = readRails({ root, unassignedLimit: 0 });
+  assert.ok(!out.channels.some(c => c.id === 'unassigned'), 'unassignedLimit 0 hides tool runs'); n++;
+  for (let i = 0; i < 60; i++) fs.rmSync(path.join(runs, 'crowd-replies-' + String(i).padStart(2, '0')), { recursive: true });
+  fs.rmSync(path.join(runs, '200-video-waiting'), { recursive: true });
+
   // oversized manifest refused
   write('102-huge', JSON.stringify({ title: 'x'.repeat(600 * 1024) }), Date.now());
   out = readRails({ root });

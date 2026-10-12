@@ -60,5 +60,15 @@ assert.ok(text(body).includes('scheduled') && text(body).includes('rejected')); 
 assert.ok(text(body).includes('⚑ videos are SILENT') && text(body).includes('⚑ b') && !text(body).includes('⚑ c'), 'at most two flags'); k++;
 assert.equal(Rails.buttonLabel({ ok: true, channels: [] }), 'Rails'); k++;
 assert.equal(Rails.buttonLabel({ ok: false }), 'Rails'); k++;
+
+// factory tool runs (no channel) are listed under UNASSIGNED but never light the dock button
+const tools = { ok: true, channels: [
+  { id: 'thatlev', runs: [{ id: 'v1', title: 'V', status: 'review', outcome: 'waiting for Lev', steps: [] }] },
+  { id: 'unassigned', runs: [{ id: 'evidence-verify-1', title: 'x', status: 'failed', steps: [] }, { id: 'crowd-replies-1', title: 'y', status: 'running', steps: [] }] }] };
+assert.equal(Rails.buttonLabel(tools), 'Rails · 1 waiting'); k++;
+assert.deepEqual(Rails.summary(tools), { running: 0, review: 1, failed: 0, total: 1 }); k++;
+assert.equal(Rails.buttonLabel({ ok: true, channels: [tools.channels[1]] }), 'Rails'); k++;
+Rails.render(doc, body, tools, now);
+assert.ok(text(body).includes('ROOM · UNASSIGNED') && text(body).includes('evidence-verify-1'), 'tool runs stay visible in the panel'); k++;
 assert.equal(Rails.mount({}, doc), null, 'never mounts outside the remote station'); k++;
 console.log('remote-rails-render: OK (' + k + ' assertions)');

@@ -19,7 +19,11 @@
    message was written into the run only (nothing reached Telegram), "delivered" = in Lev's Telegram waiting for
    his approval. */
 
-const MAX_RUNS = 40;
+const MAX_RUNS = 40;          // runs that belong to a channel (the videos)
+const MAX_UNASSIGNED = 10;    // newest runs without a channel (factory tools: crowd replies, sounds, evidence checks)
+const MAX_SCAN = 240;         // newest manifests read per request, so tool runs can never hide a video run
+const MAX_ERRORS = 20;
+const UNASSIGNED = 'unassigned';
 const MAX_BYTES = 512 * 1024;
 const RUN_ID_RE = /^[A-Za-z0-9._-]{1,120}$/;
 
@@ -92,7 +96,7 @@ function normRun(doc, dirName, mtimeMs) {
   const flags = Array.isArray(doc.flags) ? doc.flags.slice(0, 5).map(f => str(typeof f === 'string' ? f : JSON.stringify(f), 240)).filter(Boolean) : [];
   return {
     id: str(first(doc, ['id', 'run_id', 'runId']) || dirName, 120),
-    channel: str(first(doc, ['channel', 'account', 'room']) || 'unassigned', 40).toLowerCase(),
+    channel: str(first(doc, ['channel', 'account', 'room']) || UNASSIGNED, 40).toLowerCase(),
     title: str(first(doc, ['title', 'headline', 'slug', 'idea']) || dirName, 160),
     status: overall(explicit, steps),
     createdAt: time(first(doc, ['created_at', 'createdAt', 'created', 'started_at', 'startedAt'])),
@@ -104,12 +108,16 @@ function normRun(doc, dirName, mtimeMs) {
   };
 }
 
-/* readRails({ root, fs, path, limit }) -> { ok, root, channels:[{ id, runs:[...] }], errors:[{ run, error }], total } */
+/* readRails({ root, fs, path, limit, unassignedLimit }) -> { ok, root, channels:[{ id, runs:[...] }], errors:[{ run, error }], total }
+   `limit` caps the runs that carry a channel (videos, newest first); runs without a channel (factory tools such as
+   crowd replies every 30 minutes) are capped separately at `unassignedLimit`, so a busy tool can never push a video
+   that is still waiting for Lev out of the list. `total` counts every manifest found. */
 function readRails(opts) {
   const fs = opts.fs || require('node:fs');
   const path = opts.path || require('node:path');
   const root = String(opts.root || '');
   const limit = Math.max(1, Math.min(MAX_RUNS, Number(opts.limit) || MAX_RUNS));
+  const unassignedLimit = Math.max(0, Math.min(MAX_UNASSIGNED, opts.unassignedLimit == null ? MAX_UNASSIGNED : Number(opts.unassignedLimit) || 0));
   const out = { ok: true, root, channels: [], errors: [], total: 0 };
   if (!root) return Object.assign(out, { ok: false, error: 'no autopilot directory is configured' });
   const runsDir = path.join(root, 'runs');
@@ -132,13 +140,19 @@ function readRails(opts) {
   out.total = candidates.length;
   candidates.sort((a, b) => b.st.mtimeMs - a.st.mtimeMs);
   const byChannel = new Map();
-  for (const c of candidates.slice(0, limit)) {
-    if (c.st.size > MAX_BYTES) { out.errors.push({ run: c.name, error: 'run.json is larger than 512 KiB' }); continue; }
+  let videos = 0, tools = 0, scanned = 0;
+  const bad = (name, error) => { if (out.errors.length < MAX_ERRORS) out.errors.push({ run: name, error }); };
+  for (const c of candidates) {
+    if ((videos >= limit && tools >= unassignedLimit) || scanned >= MAX_SCAN) break;
+    scanned++;
+    if (c.st.size > MAX_BYTES) { bad(c.name, 'run.json is larger than 512 KiB'); continue; }
     let doc;
     try { doc = JSON.parse(fs.readFileSync(c.file, 'utf8')); }
-    catch (e) { out.errors.push({ run: c.name, error: 'run.json is not valid JSON' }); continue; }
-    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) { out.errors.push({ run: c.name, error: 'run.json is not an object' }); continue; }
+    catch (e) { bad(c.name, 'run.json is not valid JSON'); continue; }
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) { bad(c.name, 'run.json is not an object'); continue; }
     const run = normRun(doc, c.name, c.st.mtimeMs);
+    if (run.channel === UNASSIGNED) { if (tools >= unassignedLimit) continue; tools++; }
+    else { if (videos >= limit) continue; videos++; }
     if (!byChannel.has(run.channel)) byChannel.set(run.channel, []);
     byChannel.get(run.channel).push(run);
   }
