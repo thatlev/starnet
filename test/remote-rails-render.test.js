@@ -51,6 +51,13 @@ assert.ok(text(body).includes('waiting for Lev')); k++;
 assert.ok(text(body).includes('098-broken: run.json is not valid JSON'), 'bad manifests surface'); k++;
 
 assert.equal(Rails.buttonLabel(data), 'Rails · 1 waiting · 1 moving'); k++;
+
+// a run's own outcome word wins on the chip; pipeline flags are shown under the rail
+Rails.render(doc, body, { ok: true, channels: [{ id: 'thatlev', runs: [
+  { id: 'r1', title: 'THEO', status: 'done', outcome: 'scheduled', flags: ['videos are SILENT', 'b', 'c'], steps: [{ name: 'deliver', status: 'done' }] },
+  { id: 'r2', title: 'NOPE', status: 'skipped', outcome: 'rejected', steps: [] }] }] }, now);
+assert.ok(text(body).includes('scheduled') && text(body).includes('rejected')); k++;
+assert.ok(text(body).includes('⚑ videos are SILENT') && text(body).includes('⚑ b') && !text(body).includes('⚑ c'), 'at most two flags'); k++;
 assert.equal(Rails.buttonLabel({ ok: true, channels: [] }), 'Rails'); k++;
 assert.equal(Rails.buttonLabel({ ok: false }), 'Rails'); k++;
 assert.equal(Rails.mount({}, doc), null, 'never mounts outside the remote station'); k++;

@@ -60,6 +60,32 @@ try {
   assert.deepEqual(out.errors.map(e => e.run).sort(), ['098-broken', '099-array'], 'bad manifests are reported, never invented'); n++;
   assert.equal(out.total, 5, 'only real run directories with a manifest count'); n++;
 
+  // the Kedr pipeline's own manifest (autopilot/pipeline/runstate.py): run status "delivered" = waiting for Lev's ✅,
+  // step times "started"/"ended", current_step, flags
+  write('20261012-0700-theo-linux', { run_id: '20261012-0700-theo-linux', kind: 'pipeline', channel: 'thatlev',
+    title: 'THEO DITCHED MACOS', created: '2026-10-12T07:00:00+0300', updated: '2026-10-12T07:20:00+0300',
+    status: 'delivered', current_step: 'deliver', flags: ['sound: no Lev-approved sound in the bank', { odd: 1 }],
+    steps: [{ name: 'brief', status: 'done', started: '2026-10-12T07:00:01+0300', ended: '2026-10-12T07:00:40+0300', error: null, detail: 'ok' },
+      { name: 'deliver', status: 'done', started: '2026-10-12T07:19:00+0300', ended: '2026-10-12T07:20:00+0300' }] }, Date.parse('2026-10-11T17:00:00Z'));
+  write('20261012-0710-rejected', { run_id: '20261012-0710-rejected', channel: 'thatlev', title: 'NOPE', status: 'rejected',
+    steps: [{ name: 'brief', status: 'done' }] }, Date.parse('2026-10-11T16:00:00Z'));
+  write('20261012-0720-art', { run_id: '20261012-0720-art', channel: 'thatlev', title: 'ART', status: 'running', current_step: 'art',
+    steps: [{ name: 'brief', status: 'done' }, { name: 'art', status: 'pending' }] }, Date.parse('2026-10-11T15:00:00Z'));
+  out = readRails({ root });
+  const byId = Object.fromEntries(out.channels.flatMap(c => c.runs).map(r => [r.id, r]));
+  const theo = byId['20261012-0700-theo-linux'];
+  assert.equal(theo.status, 'review', '"delivered" = waiting for Lev'); n++;
+  assert.equal(theo.outcome, 'waiting for Lev'); n++;
+  assert.equal(theo.createdAt, Date.parse('2026-10-12T04:00:00Z')); n++;
+  assert.equal(theo.steps[0].endedAt, Date.parse('2026-10-12T04:00:40Z'), 'the pipeline\'s step "ended" field'); n++;
+  assert.equal(theo.steps[0].note, 'ok', 'detail is the note when error is null'); n++;
+  assert.equal(theo.current, 'deliver', 'current_step when no step is open'); n++;
+  assert.deepEqual(theo.flags, ['sound: no Lev-approved sound in the bank', '{"odd":1}']); n++;
+  assert.equal(byId['20261012-0710-rejected'].status, 'skipped'); assert.equal(byId['20261012-0710-rejected'].outcome, 'rejected'); n += 2;
+  assert.equal(byId['20261012-0720-art'].current, 'art'); assert.equal(byId['20261012-0720-art'].outcome, ''); n += 2;
+  assert.equal(normStatus('delivered'), 'review'); assert.equal(normStatus('rejected'), 'skipped'); n += 2;
+  for (const id of ['20261012-0700-theo-linux', '20261012-0710-rejected', '20261012-0720-art']) fs.rmSync(path.join(runs, id), { recursive: true });
+
   // limit keeps the newest manifests
   out = readRails({ root, limit: 1 });
   assert.equal(out.channels.length, 1); assert.equal(out.channels[0].runs[0].id, '096-haiku'); n += 2;

@@ -9,9 +9,13 @@
    becomes an `errors` row, never an invented step. Nothing here writes, executes or follows symlinks.
 
    Accepted run.json shapes (tolerant, because the factory is built separately):
-     { id|run_id, channel|account, title|headline|slug, status, created_at|createdAt, updated_at|updatedAt,
-       steps: [ { name|id|step, status|state, started_at|startedAt, finished_at|ended_at|endedAt, note|message|error } ]
-           | { <name>: { status, ... } | "<status>" } } */
+     { id|run_id, channel|account, title|headline|slug, status, created_at|createdAt|created, updated_at|updatedAt|updated,
+       current_step, flags: [str],
+       steps: [ { name|id|step, status|state, started_at|startedAt|started, finished_at|ended_at|ended|endedAt,
+                  note|message|error|detail } ]
+           | { <name>: { status, ... } | "<status>" } }
+   The Kedr pipeline (autopilot/pipeline/runstate.py) writes run status running|failed|delivered|approved|rejected|
+   scheduled: "delivered" means the video is in Lev's Telegram waiting for his approval. */
 
 const MAX_RUNS = 40;
 const MAX_BYTES = 512 * 1024;
@@ -24,8 +28,11 @@ const STATUS = {
   failed: 'failed', error: 'failed', errored: 'failed', crashed: 'failed', blocked: 'failed',
   skipped: 'skipped', skip: 'skipped', 'n/a': 'skipped',
   needs_approval: 'review', awaiting_approval: 'review', review: 'review', approval: 'review', needs_review: 'review',
-  approved: 'done', scheduled: 'done', posted: 'done', cancelled: 'skipped', canceled: 'skipped'
+  delivered: 'review',
+  approved: 'done', scheduled: 'done', posted: 'done', cancelled: 'skipped', canceled: 'skipped', rejected: 'skipped'
 };
+// Run states whose own word says more than the rail state (shown on the chip as is).
+const OUTCOME = { approved: 'approved', scheduled: 'scheduled', posted: 'posted', rejected: 'rejected', delivered: 'waiting for Lev' };
 
 function normStatus(value) {
   const key = String(value == null ? '' : value).trim().toLowerCase().replace(/\s+/g, '_');
@@ -52,7 +59,7 @@ function normStep(raw, fallbackName) {
     name: str(first(rec, ['name', 'id', 'step', 'label']) || fallbackName || 'step', 60),
     status: normStatus(first(rec, ['status', 'state'])),
     startedAt: time(first(rec, ['started_at', 'startedAt', 'started', 'start'])),
-    endedAt: time(first(rec, ['finished_at', 'ended_at', 'endedAt', 'finishedAt', 'finished', 'end'])),
+    endedAt: time(first(rec, ['finished_at', 'ended_at', 'endedAt', 'finishedAt', 'finished', 'ended', 'end'])),
     note: str(first(rec, ['note', 'message', 'error', 'detail', 'summary']), 240)
   };
 }
@@ -76,6 +83,9 @@ function overall(explicit, steps) {
 function normRun(doc, dirName, mtimeMs) {
   const steps = normSteps(doc.steps);
   const explicit = first(doc, ['status', 'state']);
+  const rawStatus = String(explicit == null ? '' : explicit).trim().toLowerCase();
+  const named = str(first(doc, ['current_step', 'currentStep']), 60);
+  const flags = Array.isArray(doc.flags) ? doc.flags.slice(0, 5).map(f => str(typeof f === 'string' ? f : JSON.stringify(f), 240)).filter(Boolean) : [];
   return {
     id: str(first(doc, ['id', 'run_id', 'runId']) || dirName, 120),
     channel: str(first(doc, ['channel', 'account', 'room']) || 'unassigned', 40).toLowerCase(),
@@ -83,7 +93,9 @@ function normRun(doc, dirName, mtimeMs) {
     status: overall(explicit, steps),
     createdAt: time(first(doc, ['created_at', 'createdAt', 'created', 'started_at', 'startedAt'])),
     updatedAt: time(first(doc, ['updated_at', 'updatedAt', 'updated'])) || Math.round(mtimeMs),
-    current: (steps.find(s => s.status === 'running' || s.status === 'failed' || s.status === 'review') || {}).name || '',
+    current: (steps.find(s => s.status === 'running' || s.status === 'failed' || s.status === 'review') || {}).name || named || '',
+    outcome: OUTCOME[rawStatus] || '',
+    flags,
     steps
   };
 }
