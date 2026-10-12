@@ -130,3 +130,54 @@ test('the connection comes back by itself when SSH drops, and the status says so
   assert.equal((await fetch(url + '/remote/status')).status, 200, 'the station answers again without anyone reopening it');
   const exited = once(child, 'exit'); child.disconnect(); assert.equal((await exited)[0], 0);
 });
+
+// The station's own status control, run as the page runs it (a minimal DOM, the real file).
+test('the status control reads the helper and says "LevServer", then "LevServer offline — retrying", then "LevServer" again', async () => {
+  const vm = require('node:vm');
+  const node = tag => {
+    const n = { tagName: tag, children: [], dataset: {}, attrs: {}, style: {}, className: '', text: '', hidden: false, disabled: false,
+      set textContent(value) { n.text = String(value); n.children = []; }, get textContent() { return n.text + n.children.map(c => c.textContent).join(''); },
+      append(...kids) { n.children.push(...kids); }, replaceChildren(...kids) { n.children = kids; }, setAttribute(key, value) { n.attrs[key] = String(value); },
+      contains: other => other === n || n.children.some(c => c.contains(other)), querySelector: () => null, querySelectorAll: () => [], closest: () => null,
+      matches: () => false, addEventListener() {}, focus() {}, showModal() { n.open = true; }, close() { n.open = false; } };
+    Object.defineProperty(n, 'firstChild', { get: () => n.children[0] });
+    return n;
+  };
+  const right = node('div'), listeners = {}, windowListeners = {};
+  const fixture = { snapshot: true, client: { host: 'lev-server-direct', name: 'LevServer', paused: false, connected: true, state: 'connected', message: 'Connected to LevServer', user: { login: 'owner' } } };
+  const reply = (ok, body) => ({ ok, status: ok ? 200 : 503, json: async () => body, text: async () => 'ok' });
+  const context = vm.createContext({
+    console, AbortController, AbortSignal, setTimeout, clearTimeout, setInterval: () => 0, performance: { now: () => Date.now() },
+    document: { createElement: node, body: node('body'), activeElement: null, hidden: false, querySelector: selector => selector === '#bottombar .bb-right' ? right : null,
+      addEventListener: (type, fn) => { listeners[type] = fn; } },
+    Channels: {}, U: { bus: { on() {} } },
+    fetch: async url => {
+      if (url === '/remote/client/status') return reply(true, fixture.client);
+      if (url === '/api/state/snapshot') return fixture.snapshot ? reply(true, { runs: [], prompts: [], remote: { goals: [] } }) : reply(false, {});
+      return reply(true, {});
+    }
+  });
+  context.window = context; context.window.__STARNET_REMOTE__ = true;
+  context.window.makeRemoteChannels = () => ({ event() {}, snapshot() {} });
+  context.window.addEventListener = (type, fn) => { windowListeners[type] = fn; };
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../frontend/app/remote-status.js'), 'utf8'), context);
+  listeners.DOMContentLoaded();
+  const control = right.children[0], label = () => control.children[1].textContent;
+  const settle = async () => { for (let n = 0; n < 8; n++) await new Promise(resolve => setImmediate(resolve)); };
+  await settle();
+  assert.equal(label(), 'LevServer');
+  assert.equal(control.dataset.attention, 'false');
+  // the connection is lost: the helper says so in its own words
+  fixture.snapshot = false;
+  fixture.client = { ...fixture.client, connected: false, state: 'offline', message: 'LevServer offline — retrying' };
+  windowListeners.online(); await settle();
+  assert.equal(label(), 'LevServer offline — retrying');
+  assert.equal(control.dataset.attention, 'true');
+  fixture.client = { ...fixture.client, state: 'connecting', message: 'Connecting to LevServer…' };
+  windowListeners.online(); await settle();
+  assert.equal(label(), 'Connecting to LevServer…');
+  fixture.snapshot = true; fixture.client = { ...fixture.client, connected: true, state: 'connected', message: 'Connected to LevServer' };
+  windowListeners.online(); await settle();
+  assert.equal(label(), 'LevServer');
+  assert.equal(control.dataset.attention, 'false');
+});
