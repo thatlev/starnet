@@ -625,9 +625,35 @@
 
       const splitter = makeCallSplitter({ enabled: Array.isArray(req.tools) && req.tools.length > 0 });
       const props = {};   // tool name -> its parameter schemas: a string <parameter> stays raw, the rest parse as JSON
+      const required = {};   // tool name -> its required parameter names
       for (const t of (Array.isArray(req.tools) ? req.tools : [])) {
         const fn = t && t.function;
-        if (fn && fn.name) props[String(fn.name)] = (fn.parameters && fn.parameters.properties) || {};
+        if (fn && fn.name) {
+          props[String(fn.name)] = (fn.parameters && fn.parameters.properties) || {};
+          required[String(fn.name)] = Array.isArray(fn.parameters && fn.parameters.required) ? fn.parameters.required : [];
+        }
+      }
+      /* RUNAWAY CALL BLOCK (2026-10-13, Kedr Captain and Mentor, live twice): `claude -p` has no stop at the end of a
+         call block, and twice the model wrote two good calls and then ~1,900 EMPTY ones (brief_proceed {} / shell_exec
+         {}) in ONE turn for 14 minutes, until the loop guard ended the run with a 502 and Lev's message went unanswered.
+         The turn now ends at the first sign of that: a call with no arguments to a tool that requires some, the same call
+         twice in one turn, or more than maxCallsPerTurn calls. The call that tripped it still goes to the loop (an empty
+         one comes back as a clear error the model fixes next turn); nothing after it is read. */
+      const maxCalls = Math.max(1, Number(opts.maxCallsPerTurn || process.env.STARNET_CLI_MAX_CALLS_PER_TURN) || 24);
+      const seenCalls = new Set();
+      let turnCalls = 0, runaway = '';
+      function runawayCall(call) {
+        turnCalls++;
+        let args = null;
+        try { args = JSON.parse(call.args || '{}'); } catch (_) { args = null; }
+        const req = required[call.name] || [];
+        if (args && typeof args === 'object' && !Array.isArray(args) && !Object.keys(args).length && req.length)
+          return 'an empty call to ' + call.name + ' (needs ' + req.join(', ') + ')';
+        const sig = call.name + '\u0000' + String(call.args || '');
+        if (seenCalls.has(sig)) return 'the same ' + call.name + ' call twice';
+        seenCalls.add(sig);
+        if (turnCalls >= maxCalls) return maxCalls + ' calls in one turn';
+        return '';
       }
       let callIndex = 0, sawText = false, result = null, apiKeySource = null, apiError = '';
       let blockDone = false, streamUsage = null;   // the call block ended the turn (see the reader's STOP)
@@ -650,6 +676,8 @@
           if (!was) yield { type: 'tool_start', index, id: callId(index), name: call.name };
           yield { type: 'tool_args', index, chunk: call.args };
           yield { type: 'tool_done', index };
+          const why = runawayCall(call);
+          if (why) { runaway = why; failNote('claudecli.runaway', new Error('turn ended after ' + why)); return; }
         }
       }
       try {
@@ -674,7 +702,7 @@
             outChars += String(j.event.delta.text || '').length;
             const part = splitter.push(j.event.delta.text);
             yield* emitSplit(part);
-            if (part.stop) { blockDone = true; break; }
+            if (part.stop || runaway) { blockDone = true; break; }
           } else if (j.type === 'stream_event' && j.event && j.event.type === 'message_start') streamUsage = Object.assign({}, j.event.message && j.event.message.usage);
           else if (j.type === 'stream_event' && j.event && j.event.type === 'message_delta' && j.event.usage) streamUsage = Object.assign(streamUsage || {}, j.event.usage);
           else if (j.type === 'assistant' && j.error) apiError = String(j.error);

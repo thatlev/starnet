@@ -295,5 +295,39 @@ const result = (extra) => Object.assign({ type: 'result', subtype: 'success', is
     A.ok(/!auxVisionProvider\.supportsImages\(\)\) throw new Error\('no vision route/.test(aux) && aux.indexOf('supportsImages') < aux.indexOf('.stream('),
       'the aux vision route refuses a provider that cannot see images BEFORE asking it to describe one');
   }
+  // 2026-10-13 (Kedr Captain + Mentor, live): two good calls, then ~1,900 EMPTY calls in one turn for 14 minutes until the
+  // loop guard's 502. The turn now ends at the first runaway sign, and nothing after it is read.
+  {
+    const tools = [
+      { type: 'function', function: { name: 'brief_proceed', parameters: { type: 'object', required: ['objective'], properties: { objective: { type: 'string' } } } } },
+      { type: 'function', function: { name: 'shell_exec', parameters: { type: 'object', required: ['command'], properties: { command: { type: 'string' } } } } },
+      { type: 'function', function: { name: 'jobs_list', parameters: { type: 'object', properties: {} } } }];
+    const good = '<function_calls>\n<invoke name="brief_proceed"><parameter name="objective">make the Gemini card</parameter></invoke>\n'
+      + '<invoke name="shell_exec"><parameter name="command">autopilot pipeline jobs list</parameter></invoke>\n';
+    const junk = Array.from({ length: 400 }, () => '<invoke name="brief_proceed"></invoke>\n<invoke name="shell_exec"></invoke>\n').join('');
+    // like the live case, the CLI is still writing when the turn should end (no exit, no result line)
+    const { p, calls } = make(call => { for (const l of [init('none'), delta(good), delta(junk)]) call.child.stdout.emit('data', JSON.stringify(l) + '\n'); return { hang: true }; }, { idleMs: 3000 });
+    const evs = await collect(p, { model: 'sonnet', tools, messages: [{ role: 'user', content: 'x' }] });
+    const done = evs.filter(e => e.type === 'tool_done');
+    A.eq(done.length, 3, 'the two good calls and the first empty one reach the loop; the other 799 are never read');
+    A.eq(JSON.parse(evs.filter(e => e.type === 'tool_args')[2].chunk), {}, 'the empty call goes to the loop as written (its error tells the model)');
+    A.eq(evs.find(e => e.type === 'done').finishReason, 'tool_calls', 'the turn ends as tool_calls');
+    A.ok(calls[0].killed, 'the CLI child is stopped instead of writing on');
+
+    // a tool with no required parameters may be called with none
+    const ok = await collect(make({ lines: [init('none'), delta('<function_calls>\n<invoke name="jobs_list"></invoke>\n</function_calls>'), result()] }).p,
+      { model: 'sonnet', tools, messages: [{ role: 'user', content: 'x' }] });
+    A.eq(ok.filter(e => e.type === 'tool_done').length, 1, 'an argument-free tool is a normal call');
+
+    // the same call twice in one turn ends it after the repeat
+    const twice = '<function_calls>\n' + Array.from({ length: 5 }, () => '<invoke name="shell_exec"><parameter name="command">ls</parameter></invoke>\n').join('');
+    const rep = await collect(make({ lines: [init('none'), delta(twice), result()] }).p, { model: 'sonnet', tools, messages: [{ role: 'user', content: 'x' }] });
+    A.eq(rep.filter(e => e.type === 'tool_done').length, 2, 'a repeated call ends the turn');
+
+    // a cap on distinct calls per turn
+    const many = '<function_calls>\n' + Array.from({ length: 40 }, (_, i) => '<invoke name="shell_exec"><parameter name="command">echo ' + i + '</parameter></invoke>\n').join('');
+    const capped = await collect(make({ lines: [init('none'), delta(many), result()] }, { maxCallsPerTurn: 10 }).p, { model: 'sonnet', tools, messages: [{ role: 'user', content: 'x' }] });
+    A.eq(capped.filter(e => e.type === 'tool_done').length, 10, 'at most maxCallsPerTurn calls in one turn');
+  }
   A.report('provider.claude-cli.test');
 })().catch(e => { console.log('FAIL: provider.claude-cli.test threw -- ' + (e && e.stack || e)); process.exit(1); });

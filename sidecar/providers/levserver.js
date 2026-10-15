@@ -5,7 +5,18 @@ const { makeCodexProvider } = require('./codex');
 function makeLevServerProvider(opts) {
   const base = String(opts.baseUrl || 'http://127.0.0.1:8781/v1').replace(/\/$/, '');
   const fetcher = opts.fetch || globalThis.fetch;
-  const engine = makeCodexProvider({ fetch: fetcher, token: opts.key, baseUrl: base, reasoningEffort: opts.reasoningEffort,
+  // The gateway validates request bodies strictly and refuses reasoning.summary ("Unrecognized key", HTTP 400),
+  // which the shared Responses engine always sends for ChatGPT. Drop it for this provider only (Oct 12 2026).
+  const gatewayFetch = (url, init) => {
+    if (init && typeof init.body === 'string' && /\/responses$/.test(String(url))) {
+      try {
+        const body = JSON.parse(init.body);
+        if (body.reasoning && 'summary' in body.reasoning) { delete body.reasoning.summary; init = { ...init, body: JSON.stringify(body) }; }
+      } catch (e) { /* not JSON: send as is */ }
+    }
+    return fetcher(url, init);
+  };
+  const engine = makeCodexProvider({ fetch: gatewayFetch, token: opts.key, baseUrl: base, reasoningEffort: opts.reasoningEffort,
     normalizeReasoningEffort: value => {
       const effort = String(value || 'medium').toLowerCase();
       if (!['low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(effort)) throw new Error('Unsupported LevServer reasoning effort');

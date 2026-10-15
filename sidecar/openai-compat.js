@@ -272,9 +272,19 @@ function makeOpenAiCompat(deps) {
     const sink = (name, payload) => {
       const p = payload || {};
       if (name === 'agent.run.start') acc.runId = p.runId || acc.runId;
-      else if (name === 'agent.token') { const dlt = p.delta || ''; if (dlt) { acc.buf += dlt; if (o.onDelta) { try { o.onDelta(dlt); } catch (_) {} } } }
-      else if (name === 'agent.tool_call') acc.buf = '';
-      else if (name === 'agent.cost') { acc.tokensIn += (p.tokensIn || 0); acc.tokensOut += (p.tokensOut || 0); }
+      else if (name === 'agent.token') {
+        const dlt = p.delta || '';
+        if (dlt) {
+          // The reply is the LAST model turn's text. A run's recovery or follow-up turns (after a refused or failed
+          // tool call) answer again without a tool call in between, and their text used to be appended: Lev's
+          // Telegram got the same answer two or three times (Oct 13). agent.cost fires once per model call.
+          if (acc.turnDone) { acc.buf = ''; acc.turnDone = false; }
+          acc.buf += dlt;
+          if (o.onDelta) { try { o.onDelta(dlt); } catch (_) {} }
+        }
+      }
+      else if (name === 'agent.tool_call') { acc.buf = ''; acc.turnDone = false; }
+      else if (name === 'agent.cost') { acc.tokensIn += (p.tokensIn || 0); acc.tokensOut += (p.tokensOut || 0); if (acc.buf) acc.turnDone = true; }
       else if (name === 'agent.run.error') { acc.errMsg = p.message || 'run error'; acc.transient = !!p.transient; }
       else if (name === 'capdenied') { acc.errMsg = acc.errMsg || ('no ' + (p.need || 'capability') + ' — ' + (p.reason || '')); }
       else if (name === 'agent.run.end') { acc.reason = p.reason; }

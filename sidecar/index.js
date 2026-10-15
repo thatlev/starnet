@@ -8110,6 +8110,24 @@ const mutatesWorkspace = (name) => /^fs\.(write|append|edit|patch)$/.test(name) 
 // they can't share — the workspace dir + shadow-git checkpoint repo — is guarded here instead, at the first
 // workspace-MUTATING tool call. Held from first touch until run end (checkpoint chain stays contiguous per
 // run); a sibling's mutating tool waits up to WORKSPACE_LEASE_WAIT_MS then fails truthfully naming the holder.
+// TURN LIMITS (Lev's station, Oct 13). A caller-driven run (the Telegram bridge's v1 calls are 'interactive') must not
+// outlive the caller: the bridge gives up after 30 min, but StarNet kept such runs going (sleep-polling loops for 1.5 h)
+// and they held the agent's workspace lease, so Lev's next message was refused ("workspace busy"). After
+// STARNET_RUN_TOOL_LIMIT_MIN minutes (default 30; 0 = off) every further tool call of an interactive run is refused
+// with "answer now". A shell command that sleeps STARNET_MAX_TOOL_SLEEP_S seconds or more (default 60; 0 = off) is
+// refused in every run: long work is queued, never waited on inside a turn.
+const RUN_TOOL_LIMIT_MS = (() => { const n = Number(ENV('RUN_TOOL_LIMIT_MIN')); return (Number.isFinite(n) && n >= 0 && ENV('RUN_TOOL_LIMIT_MIN') !== undefined && ENV('RUN_TOOL_LIMIT_MIN') !== '' ? n : 30) * 60000; })();
+const MAX_TOOL_SLEEP_S = (() => { const n = Number(ENV('MAX_TOOL_SLEEP_S')); return Number.isFinite(n) && n >= 0 && ENV('MAX_TOOL_SLEEP_S') !== undefined && ENV('MAX_TOOL_SLEEP_S') !== '' ? n : 60; })();
+function longestSleepSeconds(command) {
+  let max = 0;
+  const re = /\bsleep\s+(\d+(?:\.\d+)?)\s*([smh]?)\b/g;
+  let m;
+  while ((m = re.exec(String(command || '')))) {
+    const k = m[2] === 'h' ? 3600 : m[2] === 'm' ? 60 : 1;
+    max = Math.max(max, Number(m[1]) * k);
+  }
+  return max;
+}
 const _leaseWaitMs = Number(ENV('WORKSPACE_LEASE_WAIT_MS'));
 const workspaceLease = makeWorkspaceLease(Object.assign(
   { now: () => Date.now() },
@@ -16841,6 +16859,26 @@ async function runOnce(o) {
     // calls — a byte-identical call that keeps SUCCEEDING (e.g. many fs_write to the same path with different
     // content is a different argsRaw anyway; a legitimately-repeated identical success is not a stuck loop) is
     // never blocked, and any success RESETS the streak. Only a run stuck repeating the SAME failing call is broken.
+    if (!internalBriefControl) {
+      const runMeta = runsMeta.get(runId);
+      if (runMeta && runMeta.source === 'interactive' && RUN_TOOL_LIMIT_MS > 0 && Date.now() - runMeta.startedAt > RUN_TOOL_LIMIT_MS) {
+        return { ok: false, isError: true, summary: 'run-time-limit',
+          content: 'TIME LIMIT: this turn has run for over ' + Math.round(RUN_TOOL_LIMIT_MS / 60000) + ' minutes and its caller has '
+            + 'stopped waiting. Do not call more tools. Give your final answer now: what is done, and what is still running '
+            + '(queued jobs report back by themselves).' };
+      }
+      if (MAX_TOOL_SLEEP_S > 0 && /^(shell\.exec|terminal\.(?:start|write)|verify\.run)$/.test(c.name)) {
+        let parsed = null;
+        try { parsed = JSON.parse(String(c.argsRaw || '{}')); } catch (_) {}
+        const cmd = parsed && typeof parsed === 'object' ? [parsed.cmd, parsed.command, parsed.input, parsed.script].filter(Boolean).join(' ') : String(c.argsRaw || '');
+        const slept = longestSleepSeconds(cmd);
+        if (slept >= MAX_TOOL_SLEEP_S) {
+          return { ok: false, isError: true, summary: 'no-waiting',
+            content: 'Refused: do not wait or poll inside a turn (sleep ' + slept + ' s). Queue long work (for videos: '
+              + '`autopilot pipeline jobs add ...`), answer now, and let the job report back by itself.' };
+        }
+      }
+    }
     const sig = c.name + '|' + crypto.createHash('sha1').update(String(c.argsRaw || '')).digest('hex');
     if (execution.repeated(sig, CAPS.maxRepeat)) return { ok: false, isError: true, content: 'repeated identical FAILING call blocked (loop guard)', summary: 'loop-break' };
     // WORKSPACE LEASE: same-agent runs execute concurrently, but the workspace dir + shadow-git checkpoint
